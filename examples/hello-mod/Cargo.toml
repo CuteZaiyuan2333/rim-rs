@@ -1,0 +1,7 @@
+[package]
+name = "hello-mod"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rim-rs = { path = "../../crates/rim-rs" }
