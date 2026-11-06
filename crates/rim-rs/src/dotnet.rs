@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::process::{Command, Output};
+use std::sync::Arc;
 
 use crate::error::{Error, Result};
 
@@ -21,6 +22,13 @@ impl CommandRunner for SystemRunner {
             .args(args)
             .current_dir(working_dir)
             .output()
+    }
+}
+
+/// Lets a shared runner be stored in build options and used by reference.
+impl<T: CommandRunner + ?Sized> CommandRunner for Arc<T> {
+    fn run(&self, program: &str, args: &[String], working_dir: &Path) -> std::io::Result<Output> {
+        (**self).run(program, args, working_dir)
     }
 }
 

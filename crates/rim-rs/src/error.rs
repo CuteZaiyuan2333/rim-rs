@@ -36,6 +36,12 @@ pub enum Error {
     #[error("missing assembly reference: {0}")]
     MissingReference(PathBuf),
 
+    #[error(
+        "game_probe is disabled but no explicit csharp_reference(...) was provided; \
+         with the probe off every game assembly reference must be supplied by the caller"
+    )]
+    GameProbeWithoutReferences,
+
     #[error("asset source does not exist: {0}")]
     AssetSourceMissing(PathBuf),
 

@@ -1,10 +1,12 @@
+use std::fmt;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use crate::assets::AssetSet;
 use crate::csharp::CSharpSet;
 use crate::defs::DefSet;
-use crate::dotnet::DotnetRunner;
+use crate::dotnet::{CommandRunner, DotnetRunner, SystemRunner};
 use crate::error::{Error, Result};
 use crate::game::GameInstall;
 use crate::package::{self, Staging};
@@ -13,7 +15,7 @@ use crate::project::{self, ProjectSpec};
 use crate::xml::Element;
 
 /// Options controlling a build.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct BuildOptions {
     /// Write `dist/<ModName>.zip`.
     pub zip: bool,
@@ -31,6 +33,27 @@ pub struct BuildOptions {
     pub dist_dir: PathBuf,
     /// Override for the deploy destination.
     pub mods_dir: Option<PathBuf>,
+    /// Detect the game installation for the C# build phase (default `true`).
+    ///
+    /// With the default, `build()` locates a RimWorld 1.6 install and uses its
+    /// `Managed/` DLLs (`Assembly-CSharp`, `UnityEngine.CoreModule`, a detected
+    /// Harmony, ...) as references. With `game_probe(false)`, the probe and the
+    /// automatic references are skipped entirely: every assembly the C# sources
+    /// need must be passed explicitly via `ModBuilder::csharp_reference`. A
+    /// probe-disabled build without any explicit reference is rejected before
+    /// any file is written, instead of failing later inside `dotnet`.
+    ///
+    /// Deployment ([`BuildOptions::deploy`] without an explicit
+    /// [`BuildOptions::mods_dir`]) is independent of this switch and still
+    /// requires a local game install. Likewise, when the probe is disabled,
+    /// [`ModBuilder::game_dir`] has no effect on the C# phase; it only applies
+    /// to deployment probing.
+    pub game_probe: bool,
+    /// Process runner used to invoke `dotnet` (default: [`SystemRunner`]).
+    ///
+    /// `SystemRunner` spawns a real process; tests can inject a fake
+    /// [`CommandRunner`] to build without the .NET SDK.
+    pub runner: Option<Arc<dyn CommandRunner>>,
 }
 
 impl Default for BuildOptions {
@@ -44,7 +67,26 @@ impl Default for BuildOptions {
             work_dir: PathBuf::from(".rim-rs"),
             dist_dir: PathBuf::from("dist"),
             mods_dir: None,
+            game_probe: true,
+            runner: None,
         }
+    }
+}
+
+impl fmt::Debug for BuildOptions {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BuildOptions")
+            .field("zip", &self.zip)
+            .field("deploy", &self.deploy)
+            .field("keep_staging", &self.keep_staging)
+            .field("dotnet", &self.dotnet)
+            .field("configuration", &self.configuration)
+            .field("work_dir", &self.work_dir)
+            .field("dist_dir", &self.dist_dir)
+            .field("mods_dir", &self.mods_dir)
+            .field("game_probe", &self.game_probe)
+            .field("runner", &self.runner.as_ref().map(|_| "injected"))
+            .finish()
     }
 }
 
@@ -94,6 +136,22 @@ impl BuildOptions {
 
     pub fn mods_dir(mut self, directory: impl Into<PathBuf>) -> Self {
         self.mods_dir = Some(directory.into());
+        self
+    }
+
+    /// Sets whether the C# build phase probes the game installation.
+    ///
+    /// See [`BuildOptions::game_probe`] for the documented semantics.
+    pub fn game_probe(mut self, value: bool) -> Self {
+        self.game_probe = value;
+        self
+    }
+
+    /// Overrides the process runner used to invoke `dotnet`.
+    ///
+    /// See [`BuildOptions::runner`] for the documented semantics.
+    pub fn runner(mut self, value: Arc<dyn CommandRunner>) -> Self {
+        self.runner = Some(value);
         self
     }
 }
@@ -343,9 +401,12 @@ impl ModBuilder {
             compile_files.push(path);
         }
 
-        let game = GameInstall::locate(self.game_dir.as_deref())?;
-        game.require_16()?;
-        let mut references = game.references.clone();
+        let mut references = Vec::new();
+        if self.options.game_probe {
+            let game = GameInstall::locate(self.game_dir.as_deref())?;
+            game.require_16()?;
+            references = game.references.clone();
+        }
         for reference in csharp.references() {
             if !reference.is_file() {
                 return Err(Error::MissingReference(reference.clone()));
@@ -372,7 +433,14 @@ impl ModBuilder {
         }
         fs::create_dir_all(&output_dir).map_err(|error| Error::io(&output_dir, error))?;
 
-        DotnetRunner::new(&self.options.dotnet).build(
+        DotnetRunner::with_runner(
+            &self.options.dotnet,
+            self.options
+                .runner
+                .clone()
+                .unwrap_or_else(|| Arc::new(SystemRunner)),
+        )
+        .build(
             &csproj,
             &project_dir,
             &output_dir,
@@ -403,6 +471,13 @@ impl ModBuilder {
 
         self.csharp.validate()?;
         self.patches.validate()?;
+
+        if !self.options.game_probe
+            && self.csharp.has_sources()
+            && self.csharp.references().is_empty()
+        {
+            return Err(Error::GameProbeWithoutReferences);
+        }
 
         if self.supported_versions.is_empty() {
             return Err(Error::NoSupportedVersions);
@@ -468,6 +543,117 @@ pub fn validate_package_id(package_id: &str) -> Result<()> {
 mod tests {
     use super::*;
     use crate::defs::thing::ThingDef;
+    use std::path::Path;
+    use std::process::{ExitStatus, Output};
+    use std::sync::Mutex;
+
+    /// Simulates the local `dotnet` CLI without the .NET SDK.
+    ///
+    /// Records every invocation and, when it sees `dotnet build -o <dir>`,
+    /// reads the generated `.csproj` and writes the expected DLL into the
+    /// output directory so the rest of the C# pipeline runs for real.
+    #[derive(Clone)]
+    struct FakeDotnet {
+        calls: Arc<Mutex<Vec<String>>>,
+        csproj_text: Arc<Mutex<Option<String>>>,
+        assembly_name: String,
+        fail: bool,
+    }
+
+    impl FakeDotnet {
+        fn succeeding(assembly_name: impl Into<String>) -> Self {
+            Self {
+                calls: Arc::new(Mutex::new(Vec::new())),
+                csproj_text: Arc::new(Mutex::new(None)),
+                assembly_name: assembly_name.into(),
+                fail: false,
+            }
+        }
+
+        fn failing() -> Self {
+            let mut fake = Self::succeeding("TestMod");
+            fake.fail = true;
+            fake
+        }
+
+        fn calls(&self) -> Vec<String> {
+            self.calls.lock().unwrap().clone()
+        }
+
+        fn csproj_text(&self) -> String {
+            self.csproj_text
+                .lock()
+                .unwrap()
+                .clone()
+                .expect("dotnet build records the generated .csproj")
+        }
+    }
+
+    impl CommandRunner for FakeDotnet {
+        fn run(
+            &self,
+            program: &str,
+            args: &[String],
+            _working_dir: &Path,
+        ) -> std::io::Result<Output> {
+            assert_eq!(program, "dotnet");
+            self.calls.lock().unwrap().push(args.join(" "));
+
+            if self.fail {
+                return Ok(Output {
+                    status: failing_status(),
+                    stdout: Vec::new(),
+                    stderr: b"Mod.cs(1,1): error CS0103: the name 'Verse' does not exist\n"
+                        .to_vec(),
+                });
+            }
+
+            if args.first().is_some_and(|first| first == "build") {
+                let csproj = PathBuf::from(&args[1]);
+                *self.csproj_text.lock().unwrap() = Some(fs::read_to_string(&csproj).unwrap());
+
+                let output_dir = args
+                    .iter()
+                    .position(|arg| arg == "-o")
+                    .map(|index| args[index + 1].as_str())
+                    .expect("dotnet build always passes -o");
+                let dll = Path::new(&output_dir).join(format!("{}.dll", self.assembly_name));
+                fs::write(&dll, b"fake dll").unwrap();
+            }
+
+            Ok(Output {
+                status: succeeding_status(),
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+            })
+        }
+    }
+
+    fn succeeding_status() -> ExitStatus {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            ExitStatus::from_raw(0)
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::ExitStatusExt;
+            ExitStatus::from_raw(0)
+        }
+    }
+
+    fn failing_status() -> ExitStatus {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            ExitStatus::from_raw(101)
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::ExitStatusExt;
+            ExitStatus::from_raw(101)
+        }
+    }
 
     #[test]
     fn accepts_valid_package_ids() {
@@ -616,6 +802,121 @@ mod tests {
         assert_eq!(
             fs::read(deployed.join("Defs/Generated.xml")).unwrap(),
             fs::read(report.mod_dir.as_ref().unwrap().join("Defs/Generated.xml")).unwrap()
+        );
+    }
+
+    /// N-008: an explicitly referenced C# build must work without any game
+    /// install as long as `game_probe` is disabled.
+    #[test]
+    fn builds_csharp_without_a_game_when_probe_is_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let libs = dir.path().join("libs");
+        fs::create_dir_all(&libs).unwrap();
+        let reference = libs.join("0Harmony.dll");
+        fs::write(&reference, b"harmony stub").unwrap();
+
+        let fake = FakeDotnet::succeeding("TestMod");
+        let report = ModBuilder::builder("Test Mod")
+            .package_id("me.testmod")
+            .csharp("Mod.cs", "class Mod {}")
+            .csharp_reference(&reference)
+            .options(
+                BuildOptions::default()
+                    .base_dir(dir.path())
+                    .zip(false)
+                    .game_probe(false)
+                    .runner(Arc::new(fake.clone())),
+            )
+            .build()
+            .unwrap();
+
+        // restore + build ran through the injected fake, no probing happened.
+        let calls = fake.calls();
+        assert_eq!(calls.len(), 2, "{calls:?}");
+        assert!(calls[0].starts_with("restore "), "{:?}", calls[0]);
+        assert!(calls[1].starts_with("build "), "{:?}", calls[1]);
+
+        // The generated project only references the explicitly supplied DLL.
+        let csproj = fake.csproj_text();
+        assert!(csproj.contains("0Harmony.dll"), "{csproj}");
+        assert!(
+            !csproj.contains("Assembly-CSharp"),
+            "the game probe must be skipped: {csproj}"
+        );
+
+        // The DLL the fake produced lands in the staging Assemblies/ folder.
+        let mod_dir = report.mod_dir.as_ref().unwrap();
+        assert!(mod_dir.join("Assemblies/TestMod.dll").is_file());
+        assert!(report.dll_path.as_ref().unwrap().is_file());
+    }
+
+    /// N-008: with the probe disabled, references are the caller's
+    /// responsibility and an empty reference list is rejected up front.
+    #[test]
+    fn rejects_probe_disabled_without_explicit_references() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = ModBuilder::builder("Test Mod")
+            .package_id("me.testmod")
+            .csharp("Mod.cs", "class Mod {}")
+            .options(
+                BuildOptions::default()
+                    .base_dir(dir.path())
+                    .zip(false)
+                    .game_probe(false),
+            )
+            .build()
+            .unwrap_err();
+
+        assert!(
+            matches!(error, Error::GameProbeWithoutReferences),
+            "{error}"
+        );
+    }
+
+    /// N-008: the default must keep probing the game before any `dotnet` call.
+    #[test]
+    fn csharp_build_still_probes_the_game_by_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = ModBuilder::builder("Test Mod")
+            .package_id("me.testmod")
+            .csharp("Mod.cs", "class Mod {}")
+            .game_dir(dir.path().join("not-a-game"))
+            .options(BuildOptions::default().base_dir(dir.path()).zip(false))
+            .build()
+            .unwrap_err();
+
+        assert!(
+            matches!(error, Error::NotRimWorld(_)),
+            "the probe must stay enabled by default: {error}"
+        );
+    }
+
+    /// An injected runner must fail loudly and carry the dotnet diagnostics.
+    #[test]
+    fn surfaces_injected_dotnet_failures() {
+        let dir = tempfile::tempdir().unwrap();
+        let libs = dir.path().join("libs");
+        fs::create_dir_all(&libs).unwrap();
+        let reference = libs.join("0Harmony.dll");
+        fs::write(&reference, b"harmony stub").unwrap();
+
+        let error = ModBuilder::builder("Test Mod")
+            .package_id("me.testmod")
+            .csharp("Mod.cs", "class Mod {}")
+            .csharp_reference(&reference)
+            .options(
+                BuildOptions::default()
+                    .base_dir(dir.path())
+                    .zip(false)
+                    .game_probe(false)
+                    .runner(Arc::new(FakeDotnet::failing())),
+            )
+            .build()
+            .unwrap_err();
+
+        assert!(
+            matches!(error, Error::DotnetBuild(ref text) if text.contains("error CS0103")),
+            "{error}"
         );
     }
 }

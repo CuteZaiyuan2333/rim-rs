@@ -285,6 +285,8 @@ Mod::builder("My Mod")
 | `dotnet` | `"dotnet"` |
 | `game_dir` | 自动探测 / `RIMWORLD_DIR` |
 | `configuration` | `Release` |
+| `game_probe` | `true`（`false` 时 C# 构建跳过游戏探测，引用全部显式提供；否则未提供任何显式引用直接报错） |
+| `runner` | 真实进程（`SystemRunner`）；测试可注入 fake `CommandRunner` |
 
 ---
 
@@ -422,7 +424,8 @@ ModBuilder::build()
   6. 导出 Assets
   7. 如果有 C#：
        a. 将源码字符串写入 .rim-rs/csharp/
-       b. 探测 1.6 游戏目录和程序集
+        b. 探测 1.6 游戏目录和程序集（`game_probe(false)` 时跳过，引用全部
+           由调用方显式提供，否则报错）
        c. 生成 .rim-rs/work/Mod.csproj
        d. dotnet restore + dotnet build
        e. 复制 DLL 到 stage/Assemblies/
