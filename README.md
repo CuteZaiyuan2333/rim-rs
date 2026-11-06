@@ -132,7 +132,7 @@ Mod::builder("My Mod")
 | `defs` | `Def`、`DefSet`、`IntoDef`；`ThingDef`、`RecipeDef` 类型化 builder |
 | `patch` | `Patch` / `Operation` / `PatchSet` |
 | `csharp` | 接收 C# 源码字符串、手写 `.cs` 文件和额外程序集引用；不做语法生成 |
-| `assets` | 目录映射、贴图、预览图、路径穿越校验 |
+| `assets` | `map_file` / `map_dir` 资产映射、`textures` / `sounds` / `languages`（仅目录）、预览图、路径穿越校验 |
 | `game` | RimWorld 1.6 目录和程序集探测 |
 | `project` / `dotnet` | 生成 `net472` `.csproj`，执行 restore/build |
 | `package` | staging、禁止文件校验、zip、部署 |
