@@ -1,9 +1,9 @@
 //! Convenient imports for building a mod.
 //!
 //! ```no_run
-//! use rim_rs::prelude::*;
+//! use rim_gen::prelude::*;
 //!
-//! # fn main() -> rim_rs::Result<()> {
+//! # fn main() -> rim_gen::Result<()> {
 //! Mod::builder("Hello Rim")
 //!     .package_id("me.hello")
 //!     .defs(|defs| {

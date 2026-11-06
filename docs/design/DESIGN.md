@@ -15,7 +15,7 @@
 | 游戏版本 | **只支持 1.6**（`net472`） |
 | 1.7 | 不做，不预留公开 API；内部保留最小 `Profile` 抽象即可 |
 | `rimgen` | 完全不同项目，不引用、不合并、不依赖 |
-| Steam Workshop | 不进 MVP，后续可选 |
+| Steam Workshop | 不进 MVP；2026-11-07 决定：无实现计划 |
 | 代码归属 | `rim-rs` 由我实现和维护 |
 
 ---
@@ -36,9 +36,9 @@
 ### 3.1 最小示例
 
 ```rust
-use rim_rs::prelude::*;
+use rim_gen::prelude::*;
 
-fn main() -> rim_rs::Result<()> {
+fn main() -> rim_gen::Result<()> {
     Mod::builder("Hello Rim")
         .package_id("miquella.hello")
         .author("miquella")
@@ -97,7 +97,7 @@ fn steel_sword_recipe() -> impl IntoDef {
         .product("SteelSword", 1)
 }
 
-fn main() -> rim_rs::Result<()> {
+fn main() -> rim_gen::Result<()> {
     Mod::builder("Steel Sword")
         .package_id("miquella.steelsword")
         .supported_versions(["1.6"])
@@ -113,7 +113,7 @@ fn main() -> rim_rs::Result<()> {
 `defs.add` 接受 `impl IntoDef`，所以上层可以随意封装函数、循环、数据驱动生成：
 
 ```rust
-fn main() -> rim_rs::Result<()> {
+fn main() -> rim_gen::Result<()> {
     let items = load_items("data/items.csv")?;
 
     Mod::builder("Generated Items")
@@ -197,7 +197,7 @@ defs.add(
 
 ### 3.5 C#：源码字符串 + 手写文件
 
-`rim-rs` 不负责生成 C# 语法。外部 C# builder（或手写代码）把最终源码作为字符串传入；`rim-rs` 负责写入文件、生成 `.csproj` 并调用 `dotnet`。
+`rim-gen` 不负责生成 C# 语法。外部 C# builder（或手写代码）把最终源码作为字符串传入；`rim-gen` 负责写入文件、生成 `.csproj` 并调用 `dotnet`。
 
 ```rust
 const MOD_CODE: &str = r#"using Verse;
@@ -296,10 +296,10 @@ Mod::builder("My Mod")
 ### 4.1 crate 布局
 
 ```text
-rim-rs/
-  Cargo.toml                 # workspace
+rim-rs/                      # workspace
+  Cargo.toml
   crates/
-    rim-rs/                  # 库：所有 builder 和构建流水线
+    rim-gen/                 # 库：所有 builder 和构建流水线
       src/
         lib.rs
         prelude.rs
@@ -316,11 +316,22 @@ rim-rs/
         game.rs              # 1.6 游戏目录/程序集探测
         project.rs           # 生成 .csproj
         dotnet.rs            # restore/build 调用（CommandRunner 可注入）
-        package.rs           # staging + zip + 校验
-        builder.rs           # Mod::builder / build()
+        package.rs           # staging + zip + 校验（含 packageId 格式校验）
+        builder/             # ModBuilder：mod.rs（DSL + 校验）、
+          mod.rs             #   options.rs（BuildOptions）、report.rs（BuildReport）、
+          options.rs         #   pipeline.rs（build 流水线）、tests.rs（端到端测试）
+          report.rs
+          pipeline.rs
+          tests.rs
   examples/
     hello-mod/               # 可运行示例（binary crate）
+  # 规划中的未来成员：
+  # crates/rim-cli/          # CLI 子项目（命令行入口）
 ```
+
+workspace 以 `rim-rs` 命名；生成端库为 `rim-gen`。未来会在同一个 workspace
+中新增独立的 CLI 子项目（`rim-cli`）和一个独立的 C# 代码生成子项目（通过
+builder 调用，由其产出源码作为 `.csharp(...)` 输入；本库不实现 C# 语法生成）。
 
 ### 4.2 核心类型
 
@@ -616,7 +627,7 @@ dotnet build   .rim-rs/work/<ModName>/Mod.csproj --no-restore -c Release -o .rim
 | 校验 | `packageId` 合法/非法、大小写冲突、禁止文件 |
 | 打包 | staging 结构、zip 内容、幂等性、zip 条目顺序与字节一致性 |
 | C# | 源码原样写入、文件名与路径校验、引用无源码报错 |
-| dotnet | 用 fake `CommandRunner` 测参数、诊断摘要与无诊断回退；`builder.rs::builds_csharp_with_a_real_dotnet_and_game_link` 在设置 `RIMWORLD_DIR` + 本机 `dotnet` 时以 `--ignored` 验证真实编译链路 |
+| dotnet | 用 fake `CommandRunner` 测参数、诊断摘要与无诊断回退；`builder/tests.rs::builds_csharp_with_a_real_dotnet_and_game_link` 在设置 `RIMWORLD_DIR` + 本机 `dotnet` 时以 `--ignored` 验证真实编译链路 |
 
 所有文件系统测试用 `tempfile`，不污染工作目录。
 
@@ -633,5 +644,7 @@ MVP 已完成并验证：`cargo run -p hello-mod` 能产出完整模组目录、
 1. 更多 typed Def builder —— `HediffDef`、`ResearchProjectDef`、`TerrainDef` 已完成；继续按需补充其他常用 Def 类型。
 2. `DefOf` / Harmony 高层 helper，减少 raw C# 字符串。
 3. `rim-rs new` 模板与 `.gitignore` 生成。
-4. 增量构建与可选的 RimRef/NuGet 引用模式。
-5. Steam Workshop 上传（仍为非 MVP）。
+4. `rim-cli` CLI 子项目（工作区新成员：命令行入口，承载 `rim-rs build` / `rim-rs new` 等）。
+5. 可选的 RimRef/NuGet 引用模式（引用方式增强，非增量构建）。
+
+> 注：Steam Workshop 上传与增量构建已列入 §6.4「明确不做」（2026-11-07 决定：无实现计划），不再作为工作项。另外，未来会在 workspace 中新增一个独立的 C# 代码生成子项目——它复用本库、以 builder 形式对接（见 §1 / §4.1），本库自身不做 C# 语法生成。

@@ -89,7 +89,7 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 name = "hello-mod"
 version = "0.1.0-beta.1"
 dependencies = [
- "rim-rs",
+ "rim-gen",
 ]
 
 [[package]]
@@ -188,7 +188,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
-name = "rim-rs"
+name = "rim-gen"
 version = "0.1.0-beta.1"
 dependencies = [
  "quick-xml",

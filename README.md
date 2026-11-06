@@ -4,10 +4,10 @@
 
 Rust 代码是唯一的模组配置源：Def、Patch、C# 源码字符串、贴图都在 Rust 里组合，`build()` 时才展开成文件、调用 `dotnet` 编译 DLL、打包 zip，并可选部署到游戏 `Mods/` 目录。
 
-C# 语法生成不属于 `rim-rs` 的职责：外部 builder 或手写代码只需把最终源码作为字符串传入。
+C# 语法生成不属于 `rim-gen` 的职责：外部 builder 或手写代码只需把最终源码作为字符串传入。（未来会在 workspace 中新增一个独立的 C# 代码生成子项目对接它，详见 `docs/design/DESIGN.md` 的规划。）
 
 ```rust
-use rim_rs::prelude::*;
+use rim_gen::prelude::*;
 
 const MOD_CODE: &str = r#"using Verse;
 
@@ -52,6 +52,7 @@ fn main() -> Result<()> {
 
 - [设计文档](docs/design/DESIGN.md)
 - [调研记录](docs/design/RESEARCH.md)
+- [开发笔记](docs/dev-notes.md)（测试素材约定、游戏内验证记录）
 - [代码审查](docs/review/2026-11-06-review.md)
 - [0.1.0-beta.1 收尾记录](docs/review/2026-11-07-release-prep.md)
 
@@ -90,7 +91,7 @@ examples/hello-mod/dist/Rim RS Test.zip
 
 ## C# 输入
 
-`rim-rs` 只负责把源码写入 `.rim-rs/csharp/<ModName>/`、生成 `net472` 项目并调用 `dotnet`，不提供 `Class` / `Method` 之类的语法 builder。
+`rim-gen` 只负责把源码写入 `.rim-rs/csharp/<ModName>/`、生成 `net472` 项目并调用 `dotnet`，不提供 `Class` / `Method` 之类的语法 builder。
 
 ```rust
 Mod::builder("My Mod")
@@ -160,27 +161,7 @@ dry-run 下会直接报错：跳过编译会留下没有 DLL 的 staging，无�
 - **覆盖保护**：staging 与部署目录的覆盖都是整体替换，覆盖前会校验已有 `About.xml` 的 `packageId`（缺失时回退大小写不敏感的 `name` 比较）。属于另一个 mod 的目录（例如 Windows/macOS 上大小写变体的 mod 名）会被拒绝，而不是静默删除。
 - **失败不留残迹**：`build()` 失败时清理本次 staging（可能被误当成可用 mod 的残缺目录）；`csharp/` / `work/` / `out/` 中间产物保留供排查。
 - 未覆盖的字段用 `child(...)`、`raw(...)` 或通用 `Def` 表达。
-- **明确不做**：Steam Workshop 上传、增量构建、`LoadFolders.xml`、1.7 / 多版本、C# 语法生成。
-
-## 测试素材约定
-
-- 需要测试新图标、物品、服装、实体等贴图时，统一使用**黑色 + 紫色**的“贴图缺失”风格占位图，不寻找外部美术素材。
-- `About/Preview.png` 保留当前白底标题样式。
-- 测试模组保留在游戏 `Mods/` 中，后续开发直接覆盖同一个模组目录。
-
-## 验证
-
-已用本机 RimWorld 1.6.4871（GOG，Wine）执行 `-quicktest` 验证生成物：
-
-```text
-[rim-rs] test mod loaded
-[rim-rs] thing loaded: RimRsPurpleCube / rim-rs purple cube
-[rim-rs] flammability: 0.4
-[rim-rs] recipe loaded: Make_RimRsPurpleCube
-[rim-rs] recipe attached to CraftingSpot
-```
-
-`flammability: 0.4` 说明生成的 Patch 已生效；`recipe attached to CraftingSpot` 说明配方通过 `recipeUsers` 挂到了工作台上。
+- **明确不做**（唯一权威清单，含每项的决策记录，见 [DESIGN §6.4](docs/design/DESIGN.md#64-明确不做)），当前包括：Steam Workshop 上传、增量构建、`LoadFolders.xml`、1.7 / 多版本、本库内的 C# 语法生成等。
 
 ## 测试
 
@@ -193,7 +174,7 @@ RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps
 
 补充验证：
 
-- `RIMWORLD_DIR=... cargo test -p rim-rs --lib detects_an_env -- --ignored`：真实游戏安装的探测测试（默认 `#[ignore]`）。
-- `RIMWORLD_DIR=... cargo test -p rim-rs --lib builds_csharp_with_a_real_dotnet_and_game_link -- --ignored`：真实 `dotnet` 的 C# 端到端编译测试（需要本机 .NET SDK + 游戏 DLL；默认 `#[ignore]`）。
+- `RIMWORLD_DIR=... cargo test -p rim-gen --lib detects_an_env -- --ignored`：真实游戏安装的探测测试（默认 `#[ignore]`）。
+- `RIMWORLD_DIR=... cargo test -p rim-gen --lib builds_csharp_with_a_real_dotnet_and_game_link -- --ignored`：真实 `dotnet` 的 C# 端到端编译测试（需要本机 .NET SDK + 游戏 DLL；默认 `#[ignore]`）。
 - zip 打包确定性：条目按路径排序、时间戳固定为 1980-01-01，相同输入产出字节一致的 zip。
 - CI（`.github/workflows/ci.yml`）在 push / PR 上运行上述 fmt / clippy / test / doc 检查，不依赖 RimWorld 或 .NET SDK。

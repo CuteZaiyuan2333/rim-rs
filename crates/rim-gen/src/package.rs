@@ -9,6 +9,28 @@ use zip::{CompressionMethod, DateTime, ZipWriter};
 
 use crate::error::{Error, Result};
 
+/// Checks the `packageId` format required by RimWorld: ASCII letters, digits
+/// and dots with at least one dot separating author and mod, no leading,
+/// trailing or doubled dots, at most 60 characters and never containing
+/// `Ludeon`.
+pub fn validate_package_id(package_id: &str) -> Result<()> {
+    let valid = package_id.len() <= 60
+        && package_id.contains('.')
+        && !package_id.starts_with('.')
+        && !package_id.ends_with('.')
+        && !package_id.contains("..")
+        && !package_id.to_ascii_lowercase().contains("ludeon")
+        && package_id
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '.');
+
+    if valid {
+        Ok(())
+    } else {
+        Err(Error::InvalidPackageId(package_id.to_string()))
+    }
+}
+
 /// Writes files into a staging directory while guarding against path escapes
 /// and case-insensitive collisions.
 pub struct Staging {
@@ -266,10 +288,7 @@ pub fn zip_dir(source: &Path, destination: &Path) -> Result<()> {
 /// Recursively copies `source` to `destination`, replacing `destination`.
 pub fn copy_dir_all(source: &Path, destination: &Path) -> Result<()> {
     if !source.is_dir() {
-        return Err(Error::Message(format!(
-            "source directory does not exist: {}",
-            source.display()
-        )));
+        return Err(Error::SourceDirMissing(source.to_path_buf()));
     }
 
     if destination.exists() {
@@ -278,7 +297,7 @@ pub fn copy_dir_all(source: &Path, destination: &Path) -> Result<()> {
     fs::create_dir_all(destination).map_err(|error| Error::io(destination, error))?;
 
     for entry in WalkDir::new(source).follow_links(false) {
-        let entry = entry.map_err(|err| Error::Message(err.to_string()))?;
+        let entry = entry.map_err(|err| Error::walk(source, err))?;
         let relative = entry
             .path()
             .strip_prefix(source)
@@ -292,11 +311,10 @@ pub fn copy_dir_all(source: &Path, destination: &Path) -> Result<()> {
                 fs::create_dir_all(parent).map_err(|error| Error::io(parent, error))?;
             }
             fs::copy(entry.path(), &target).map_err(|error| Error::io(entry.path(), error))?;
+        } else if entry.file_type().is_symlink() {
+            return Err(Error::SymlinkNotAllowed(entry.path().to_path_buf()));
         } else {
-            return Err(Error::Message(format!(
-                "unsupported file type in source: {}",
-                entry.path().display()
-            )));
+            return Err(Error::UnsupportedFileType(entry.path().to_path_buf()));
         }
     }
 
@@ -306,6 +324,44 @@ pub fn copy_dir_all(source: &Path, destination: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accepts_valid_package_ids() {
+        for id in ["me.mymod", "Author.ModSeries.Mod", "a.b"] {
+            assert!(validate_package_id(id).is_ok(), "{id}");
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_package_ids() {
+        for id in [
+            "",
+            "nodot",
+            ".start",
+            "end.",
+            "double..dot",
+            "has space.a",
+            "Ludeon.Mod",
+            "a_b.c",
+        ] {
+            assert!(validate_package_id(id).is_err(), "{id}");
+        }
+        assert!(validate_package_id(&"a".repeat(61)).is_err());
+    }
+
+    #[test]
+    fn rejects_a_missing_copy_source_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("no-such-mod");
+
+        let error = copy_dir_all(&missing, &dir.path().join("destination")).unwrap_err();
+        assert!(
+            matches!(error, Error::SourceDirMissing(ref path) if *path == missing),
+            "{error}"
+        );
+        // Nothing was created at the destination.
+        assert!(!dir.path().join("destination").exists());
+    }
 
     #[test]
     fn replaces_a_directory_of_the_same_mod() {

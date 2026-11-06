@@ -1,6 +1,6 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-/// Errors produced by `rim-rs`.
+/// Errors produced by `rim-gen`.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("mod name must not be empty")]
@@ -19,7 +19,7 @@ pub enum Error {
     #[error("at least one supported version is required")]
     NoSupportedVersions,
 
-    #[error("rim-rs currently supports only RimWorld 1.6, got version `{0}`")]
+    #[error("rim-gen currently supports only RimWorld 1.6, got version `{0}`")]
     UnsupportedVersion(String),
 
     #[error("game directory not found; set RIMWORLD_DIR or call .game_dir(...)")]
@@ -56,6 +56,24 @@ pub enum Error {
 
     #[error("asset directory mapping source is not a directory: {0} (use map_file for files)")]
     AssetDirExpected(PathBuf),
+
+    #[error("source directory does not exist: {0}")]
+    SourceDirMissing(PathBuf),
+
+    #[error("source file does not exist: {0}")]
+    SourceFileMissing(PathBuf),
+
+    #[error("symlink in the collected tree is not allowed: {0}")]
+    SymlinkNotAllowed(PathBuf),
+
+    #[error("unsupported file type in `{0}` (only plain files and directories can be staged)")]
+    UnsupportedFileType(PathBuf),
+
+    #[error("directory traversal failed at `{path}`: {detail}")]
+    Walk { path: PathBuf, detail: String },
+
+    #[error("dotnet build succeeded but the expected DLL was not produced: `{0}`")]
+    DllNotProduced(PathBuf),
 
     #[error(
         "invalid defName `{0}`: use ASCII letters, digits, `_`, `-` and `.`; it must not be empty"
@@ -111,9 +129,6 @@ pub enum Error {
 
     #[error("zip error: {0}")]
     Zip(String),
-
-    #[error("{0}")]
-    Message(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -123,6 +138,17 @@ impl Error {
         Self::Io {
             path: path.into(),
             source,
+        }
+    }
+
+    /// Maps a failed [`walkdir::WalkDir`] step onto [`Error::Walk`] with the
+    /// best available location (the walk error's own path, falling back to the
+    /// root that was walked).
+    pub(crate) fn walk(root: &Path, error: walkdir::Error) -> Self {
+        let path = error.path().unwrap_or(root).to_path_buf();
+        Self::Walk {
+            path,
+            detail: error.to_string(),
         }
     }
 }

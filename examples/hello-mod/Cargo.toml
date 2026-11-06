@@ -4,4 +4,4 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-rim-rs = { path = "../../crates/rim-rs" }
+rim-gen = { path = "../../crates/rim-gen" }

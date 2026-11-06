@@ -35,7 +35,7 @@ impl<T: CommandRunner + ?Sized> CommandRunner for Arc<T> {
 /// Runs the local `dotnet` CLI.
 ///
 /// ```no_run
-/// use rim_rs::dotnet::DotnetRunner;
+/// use rim_gen::dotnet::DotnetRunner;
 /// use std::path::Path;
 ///
 /// DotnetRunner::new("dotnet").build(
@@ -44,7 +44,7 @@ impl<T: CommandRunner + ?Sized> CommandRunner for Arc<T> {
 ///     Path::new(".rim-rs/out"),
 ///     "Release",
 /// )?;
-/// # Ok::<(), rim_rs::Error>(())
+/// # Ok::<(), rim_gen::Error>(())
 /// ```
 #[derive(Debug, Clone)]
 pub struct DotnetRunner<R: CommandRunner = SystemRunner> {

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/rim-rs", "examples/hello-mod"]
+members = ["crates/rim-gen", "examples/hello-mod"]
 
 [workspace.package]
 version = "0.1.0-beta.1"

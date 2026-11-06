@@ -7,7 +7,7 @@ use crate::error::{Error, Result};
 
 /// C# inputs for a mod: in-memory sources, files on disk, and extra references.
 ///
-/// `rim-rs` does not generate C# syntax itself. Callers can use any code
+/// `rim-gen` does not generate C# syntax itself. Callers can use any code
 /// generator (or hand-written files) and pass the resulting source as a string.
 #[derive(Debug, Default)]
 pub(crate) struct CSharpSet {
@@ -104,18 +104,12 @@ impl CSharpSet {
 
         for dir in &self.dirs {
             if !dir.is_dir() {
-                return Err(Error::Message(format!(
-                    "C# source directory does not exist: {}",
-                    dir.display()
-                )));
+                return Err(Error::SourceDirMissing(dir.clone()));
             }
             for entry in WalkDir::new(dir).follow_links(false) {
-                let entry = entry.map_err(|err| Error::Message(err.to_string()))?;
+                let entry = entry.map_err(|err| Error::walk(dir, err))?;
                 if entry.file_type().is_symlink() {
-                    return Err(Error::Message(format!(
-                        "symlink in C# source directory is not allowed: {}",
-                        entry.path().display()
-                    )));
+                    return Err(Error::SymlinkNotAllowed(entry.path().to_path_buf()));
                 }
                 if entry.file_type().is_file()
                     && entry.path().extension().is_some_and(|ext| ext == "cs")
@@ -161,10 +155,7 @@ fn validate_generated_name(name: &str) -> Result<()> {
 
 fn push_unique(files: &mut Vec<PathBuf>, seen: &mut HashSet<PathBuf>, path: &Path) -> Result<()> {
     if !path.is_file() {
-        return Err(Error::Message(format!(
-            "C# source file does not exist: {}",
-            path.display()
-        )));
+        return Err(Error::SourceFileMissing(path.to_path_buf()));
     }
     let canonical = path
         .canonicalize()
@@ -255,5 +246,35 @@ mod tests {
 
         let files = set.compile_files().unwrap();
         assert_eq!(files.len(), 1);
+    }
+
+    /// `csharp_dir` must fail loudly when the directory is missing instead of
+    /// silently compiling a project without it.
+    #[test]
+    fn rejects_a_missing_csharp_source_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("no-such-dir");
+
+        let mut set = CSharpSet::new();
+        set.add_dir(&missing);
+
+        assert!(matches!(
+            set.compile_files(),
+            Err(Error::SourceDirMissing(path)) if path == missing
+        ));
+    }
+
+    #[test]
+    fn rejects_a_missing_csharp_source_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("Missing.cs");
+
+        let mut set = CSharpSet::new();
+        set.add_file(&missing);
+
+        assert!(matches!(
+            set.compile_files(),
+            Err(Error::SourceFileMissing(path)) if path == missing
+        ));
     }
 }

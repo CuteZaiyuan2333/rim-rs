@@ -1,5 +1,5 @@
 [package]
-name = "rim-rs"
+name = "rim-gen"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

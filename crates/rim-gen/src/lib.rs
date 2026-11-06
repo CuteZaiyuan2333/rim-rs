@@ -1,4 +1,5 @@
-//! `rim-rs` — a builder-based RimWorld 1.6 mod generator.
+//! `rim-gen` — the builder library of the rim-rs workspace; the generated mod
+//! toolchain for RimWorld 1.6.
 //!
 //! The crate is intentionally small: it models XML, Defs, patches, C# source
 //! and assets as Rust values, then expands them into a ready-to-load mod

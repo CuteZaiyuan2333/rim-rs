@@ -104,12 +104,9 @@ impl AssetSet {
             }
 
             for entry in WalkDir::new(&mapping.source).follow_links(false) {
-                let entry = entry.map_err(|err| Error::Message(err.to_string()))?;
+                let entry = entry.map_err(|err| Error::walk(&mapping.source, err))?;
                 if entry.file_type().is_symlink() {
-                    return Err(Error::Message(format!(
-                        "symlink in asset directory is not allowed: {}",
-                        entry.path().display()
-                    )));
+                    return Err(Error::SymlinkNotAllowed(entry.path().to_path_buf()));
                 }
                 if !entry.file_type().is_file() {
                     continue;
@@ -186,6 +183,26 @@ mod tests {
         assert!(matches!(
             assets.collect(),
             Err(Error::AssetFileExpected(path)) if path == textures
+        ));
+    }
+
+    /// Symlinked textures are never followed: the game would load the real
+    /// file from wherever the link points, so the collection stops here.
+    #[cfg(unix)]
+    #[test]
+    fn rejects_a_symlink_inside_a_texture_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let textures = dir.path().join("textures");
+        std::fs::create_dir_all(&textures).unwrap();
+        let link = textures.join("evil.png");
+        std::os::unix::fs::symlink("../evil.png", &link).unwrap();
+
+        let mut assets = AssetSet::new();
+        assets.textures(&textures);
+
+        assert!(matches!(
+            assets.collect(),
+            Err(Error::SymlinkNotAllowed(path)) if path == link
         ));
     }
 
