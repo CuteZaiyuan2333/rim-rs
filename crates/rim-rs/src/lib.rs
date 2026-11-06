@@ -9,7 +9,7 @@
 
 pub mod assets;
 pub mod builder;
-pub mod csharp;
+mod csharp;
 pub mod defs;
 pub mod dotnet;
 pub mod error;

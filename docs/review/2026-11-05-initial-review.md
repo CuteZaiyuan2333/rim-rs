@@ -1,5 +1,7 @@
 # rim-rs 初次代码审查
 
+> 后续整改状态与执行顺序见 [`docs/plan/2026-11-05-remediation-plan.md`](../plan/2026-11-05-remediation-plan.md)。
+
 - 审查日期：2026-11-05
 - 审查对象：`rim-rs` workspace 首次建仓时的代码、测试与文档
 - 工具链：Rust 1.98.1、Cargo 1.98.1、.NET SDK 10.0.114
@@ -55,7 +57,7 @@ cargo run -p hello-mod                          成功生成 stage、DLL、zip
 | R-004 | 中 | `dotnet` 调用层没有测试，也没有可注入的 runner | 待改进 |
 | R-005 | 低 | `assets.map(file, "Dir")` 会把文件写成名为 `Dir` 的文件 | 待修复 |
 | R-006 | 低 | 目录遍历和 zip 时间戳未固定，构建产物不可复现 | 待改进 |
-| R-007 | 低 | `CSharpSet::is_empty()` 忽略 references，只加引用时不会编译 | 待修复 |
+| R-007 | 低 | `CSharpSet::is_empty()` 忽略 references，只加引用时不会编译 | 已修复（2026-11-06，C# API 简化时） |
 | R-008 | 低 | `supported_version()` 在默认 `1.6` 基础上追加，API 语义易混淆 | 待改进 |
 | R-009 | 低 | `README` 的 Harmony 引用说明与自动探测行为不一致 | 待更正文档 |
 | R-010 | 低 | `require_16()` 仅检查 `1.6` 字符串前缀 | 待改进 |
@@ -72,9 +74,9 @@ cargo run -p hello-mod                          成功生成 stage、DLL、zip
 
 ### R-002 C# 编译错误解析与文档不符
 
-位置：`crates/rim-rs/src/dotnet.rs:54-80`、`DESIGN.md:590`
+位置：`crates/rim-rs/src/dotnet.rs:54-80`、`docs/design/DESIGN.md`（MVP 清单）
 
-`DESIGN.md` 的 MVP 清单将“编译错误解析”标记为已完成，但实现只是把完整 stdout/stderr 拼进 `Error::DotnetBuild`，并未提取 `error CSxxxx` / `error MSBxxxx`，也没有映射到生成的 `.cs` 行号。
+`docs/design/DESIGN.md` 的 MVP 清单曾将“编译错误解析”标记为已完成，但实现只是把完整 stdout/stderr 拼进 `Error::DotnetBuild`，并未提取 `error CSxxxx` / `error MSBxxxx`，也没有映射到生成的 `.cs` 行号。
 
 建议：要么实现最小错误摘要，要么把 DESIGN 中的勾选改为未完成，并补充后续计划。
 
@@ -120,7 +122,9 @@ assets.map("preview.png", "Textures");
 
 位置：`crates/rim-rs/src/csharp.rs:48-50`、`crates/rim-rs/src/builder.rs:264-272`
 
-`CSharpSet::is_empty()` 只检查生成文件、手写文件和目录，不检查 `references`。如果用户只调用 `cs.reference(...)`，不会触发 C# 构建流程。
+`CSharpSet::is_empty()` 只检查生成文件、手写文件和目录，不检查 `references`。如果用户只调用 `csharp_reference(...)`，不会触发 C# 构建流程。
+
+> 2026-11-06 更新：C# 输入已简化为源码字符串；`CSharpSet::validate()` 现在会在“只有引用、没有源码”时返回错误。
 
 建议：将 `!self.references.is_empty()` 纳入判定，或明确只允许引用依附于源码存在。
 
@@ -136,7 +140,7 @@ builder 默认已有 `1.6`，`supported_version()` 采用追加而不是替换�
 
 位置：`README.md:240`、`crates/rim-rs/src/game.rs:47-58`
 
-README 说使用 Harmony 时必须通过 `cs.reference(...)` 显式添加引用；实现会自动把游戏 Managed 目录中存在的 `0Harmony.dll` / `HarmonyLib.dll` 加入引用。两种说法并不完全冲突，但会让用户误以为必须手动配置。
+README 说使用 Harmony 时必须通过 `csharp_reference(...)` 显式添加引用；实现会自动把游戏 Managed 目录中存在的 `0Harmony.dll` / `HarmonyLib.dll` 加入引用。两种说法并不完全冲突，但会让用户误以为必须手动配置。
 
 建议：统一文档表述，说明“游戏目录中已存在时自动加入，其他位置需显式引用”。
 

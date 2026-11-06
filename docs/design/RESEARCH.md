@@ -591,7 +591,7 @@ references = "local"        # local | rimref
 defs = "src/defs"
 patches = "src/patches"
 csharp = "src-csharp"
-generated_csharp = ".rim-rs/gen/csharp"
+generated_csharp = ".rim-rs/csharp"
 assets = "assets"
 
 [assets]

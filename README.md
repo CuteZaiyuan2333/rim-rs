@@ -2,10 +2,21 @@
 
 用 Rust builder 生成 RimWorld **1.6** 模组的工具链。
 
-Rust 代码是唯一的模组配置源：Def、Patch、C#、贴图都在 Rust 里组合，`build()` 时才展开成文件、调用 `dotnet` 编译 DLL、打包 zip，并可选部署到游戏 `Mods/` 目录。
+Rust 代码是唯一的模组配置源：Def、Patch、C# 源码字符串、贴图都在 Rust 里组合，`build()` 时才展开成文件、调用 `dotnet` 编译 DLL、打包 zip，并可选部署到游戏 `Mods/` 目录。
+
+C# 语法生成不属于 `rim-rs` 的职责：外部 builder 或手写代码只需把最终源码作为字符串传入。
 
 ```rust
 use rim_rs::prelude::*;
+
+const MOD_CODE: &str = r#"using Verse;
+
+[StaticConstructorOnStartup]
+public static class MyMod
+{
+    static MyMod() => Log.Message("[my-mod] loaded");
+}
+"#;
 
 fn main() -> Result<()> {
     Mod::builder("Rim RS Test")
@@ -27,21 +38,7 @@ fn main() -> Result<()> {
                     .recipe_user("CraftingSpot"),
             );
         })
-        .csharp(|cs| {
-            cs.add(
-                CSharpFile::new("RimRsTestMod")
-                    .using("Verse")
-                    .add(
-                        Class::new("RimRsTestMod")
-                            .static_()
-                            .attribute("StaticConstructorOnStartup")
-                            .method(
-                                Method::static_ctor("RimRsTestMod")
-                                    .line("Log.Message(\"[rim-rs] loaded\");"),
-                            ),
-                    ),
-            );
-        })
+        .csharp("MyMod.cs", MOD_CODE)
         .assets(|assets| {
             assets.textures("assets/textures");
             assets.preview("assets/preview.png");
@@ -50,6 +47,13 @@ fn main() -> Result<()> {
     Ok(())
 }
 ```
+
+## 文档
+
+- [设计文档](docs/design/DESIGN.md)
+- [调研记录](docs/design/RESEARCH.md)
+- [初次代码审查](docs/review/2026-11-05-initial-review.md)
+- [审查整改计划](docs/plan/2026-11-05-remediation-plan.md)
 
 ## 快速开始
 
@@ -81,8 +85,26 @@ examples/hello-mod/dist/Rim RS Test.zip
 
 - `ThingDef` / `RecipeDef` 结构化 builder
 - `PatchOperationAdd` 修改自己生成的 Def
-- `[StaticConstructorOnStartup]` C# 入口，启动时输出日志并检查 Def
+- C# 源码以字符串传入，启动时输出日志并检查 Def
 - 贴图和 `About/Preview.png` 映射
+
+## C# 输入
+
+`rim-rs` 只负责把源码写入 `.rim-rs/csharp/`、生成 `net472` 项目并调用 `dotnet`，不提供 `Class` / `Method` 之类的语法 builder。
+
+```rust
+Mod::builder("My Mod")
+    .csharp("MyMod.cs", generated_code)      // 内存中的字符串，原样写入
+    .csharp_file("src-csharp/Extra.cs")      // 已存在的文件
+    .csharp_dir("src-csharp")                // 目录下所有 .cs
+    .csharp_reference("/path/to/0Harmony.dll")
+    .build()?;
+```
+
+- `.csharp(name, code)` 的文件名没有扩展名时会自动补 `.cs`。
+- 源码字符串不会添加任何头部或注释，传入什么就编译什么。
+- 只添加引用而没有源码会直接报错，避免静默跳过 C# 构建。
+- 游戏 `Managed/` 中的 `0Harmony.dll` / `HarmonyLib.dll` 会自动加入引用。
 
 ## 构建选项
 
@@ -109,7 +131,7 @@ Mod::builder("My Mod")
 | `xml` | 自有 XML 树，`quick-xml` 序列化；文本自动转义，`raw()` 逃生口 |
 | `defs` | `Def`、`DefSet`、`IntoDef`；`ThingDef`、`RecipeDef` 类型化 builder |
 | `patch` | `Patch` / `Operation` / `PatchSet` |
-| `csharp` | 结构化生成 `CSharpFile` / `Class` / `Method` / `Field`，也接受手写 `.cs` |
+| `csharp` | 接收 C# 源码字符串、手写 `.cs` 文件和额外程序集引用；不做语法生成 |
 | `assets` | 目录映射、贴图、预览图、路径穿越校验 |
 | `game` | RimWorld 1.6 目录和程序集探测 |
 | `project` / `dotnet` | 生成 `net472` `.csproj`，执行 restore/build |
@@ -121,9 +143,9 @@ Mod::builder("My Mod")
 - **只支持 RimWorld 1.6**：`supportedVersions` 只接受 `1.6`，C# 目标框架固定 `net472`。
 - **Builder-first**：没有主 TOML 配置；Rust 代码就是模组定义。
 - **延迟副作用**：只有 `build()` 写文件、调用 `dotnet`、打包和部署。
-- **可检查的中间产物**：生成的 XML、C#、`.csproj`、DLL 保留在 `.rim-rs/` 下。
+- **可检查的中间产物**：生成的 XML、C# 源码、`.csproj`、DLL 保留在 `.rim-rs/` 下。
 - 未覆盖的字段用 `child(...)`、`raw(...)` 或通用 `Def` 表达。
-- 暂不包含：Steam Workshop 上传、`LoadFolders.xml`、1.7、完整 C# AST。
+- 暂不包含：Steam Workshop 上传、`LoadFolders.xml`、1.7、C# 语法生成。
 
 ## 测试素材约定
 

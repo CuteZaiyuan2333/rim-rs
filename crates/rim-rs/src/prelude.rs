@@ -17,7 +17,6 @@
 pub use crate::Result;
 pub use crate::assets::AssetSet;
 pub use crate::builder::{BuildOptions, BuildReport, ModBuilder, ModBuilder as Mod};
-pub use crate::csharp::{CSharpFile, CSharpSet, Class, Field, Method};
 pub use crate::defs::{Def, DefSet, IntoDef, RecipeDef, ThingDef};
 pub use crate::patch::{Operation, Patch, PatchSet};
 pub use crate::xml::{Element, Node, Xml};

@@ -5,84 +5,104 @@ use walkdir::WalkDir;
 
 use crate::error::{Error, Result};
 
-/// A collection of C# sources and extra assembly references.
+/// C# inputs for a mod: in-memory sources, files on disk, and extra references.
 ///
-/// Generated files are rendered into `.rim-rs/gen/csharp/`; raw files are
-/// compiled in place. Nothing is written until [`crate::ModBuilder::build`].
+/// `rim-rs` does not generate C# syntax itself. Callers can use any code
+/// generator (or hand-written files) and pass the resulting source as a string.
 #[derive(Debug, Default)]
-pub struct CSharpSet {
-    files: Vec<CSharpFile>,
-    raw_files: Vec<PathBuf>,
-    raw_dirs: Vec<PathBuf>,
+pub(crate) struct CSharpSet {
+    sources: Vec<SourceFile>,
+    files: Vec<PathBuf>,
+    dirs: Vec<PathBuf>,
     references: Vec<PathBuf>,
 }
 
+#[derive(Debug)]
+struct SourceFile {
+    name: String,
+    code: String,
+}
+
 impl CSharpSet {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
-    pub fn add(&mut self, file: CSharpFile) -> &mut Self {
-        self.files.push(file);
+    /// Adds an in-memory source file. The code is written verbatim.
+    pub(crate) fn add_source(
+        &mut self,
+        name: impl Into<String>,
+        code: impl Into<String>,
+    ) -> &mut Self {
+        let name = normalize_file_name(&name.into());
+        self.sources.push(SourceFile {
+            name,
+            code: code.into(),
+        });
         self
     }
 
     /// Adds a hand-written `.cs` file.
-    pub fn add_file(&mut self, path: impl Into<PathBuf>) -> &mut Self {
-        self.raw_files.push(path.into());
+    pub(crate) fn add_file(&mut self, path: impl Into<PathBuf>) -> &mut Self {
+        self.files.push(path.into());
         self
     }
 
     /// Adds every `.cs` file under a directory (recursively).
-    pub fn add_dir(&mut self, path: impl Into<PathBuf>) -> &mut Self {
-        self.raw_dirs.push(path.into());
+    pub(crate) fn add_dir(&mut self, path: impl Into<PathBuf>) -> &mut Self {
+        self.dirs.push(path.into());
         self
     }
 
     /// Adds an assembly reference, e.g. a Harmony DLL.
-    pub fn reference(&mut self, path: impl Into<PathBuf>) -> &mut Self {
+    pub(crate) fn add_reference(&mut self, path: impl Into<PathBuf>) -> &mut Self {
         self.references.push(path.into());
         self
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.files.is_empty() && self.raw_files.is_empty() && self.raw_dirs.is_empty()
+    pub(crate) fn has_sources(&self) -> bool {
+        !self.sources.is_empty() || !self.files.is_empty() || !self.dirs.is_empty()
     }
 
-    pub fn references(&self) -> &[PathBuf] {
+    pub(crate) fn references(&self) -> &[PathBuf] {
         &self.references
     }
 
-    /// Renders generated files as `(file_name, content)`.
-    pub fn render_files(&self) -> Result<Vec<(String, String)>> {
-        let mut seen = HashSet::new();
-        let mut rendered = Vec::with_capacity(self.files.len());
+    /// References only make sense when at least one source file is compiled.
+    pub(crate) fn validate(&self) -> Result<()> {
+        if !self.references.is_empty() && !self.has_sources() {
+            return Err(Error::CSharpReferenceWithoutSource);
+        }
+        Ok(())
+    }
 
-        for file in &self.files {
-            let name = file.file_name();
-            validate_generated_name(&name)?;
-            let key = name.to_ascii_lowercase();
+    /// Returns validated in-memory sources as `(file_name, code)` pairs.
+    pub(crate) fn source_files(&self) -> Result<Vec<(&str, &str)>> {
+        let mut seen = HashSet::new();
+        let mut rendered = Vec::with_capacity(self.sources.len());
+
+        for source in &self.sources {
+            validate_generated_name(&source.name)?;
+            let key = source.name.to_ascii_lowercase();
             if !seen.insert(key) {
-                return Err(Error::Message(format!(
-                    "duplicate generated C# file name: {name}"
-                )));
+                return Err(Error::DuplicateOutputPath(source.name.clone()));
             }
-            rendered.push((name, file.render()));
+            rendered.push((source.name.as_str(), source.code.as_str()));
         }
 
         Ok(rendered)
     }
 
     /// Expands raw files/directories into a deduplicated compile list.
-    pub fn compile_files(&self) -> Result<Vec<PathBuf>> {
+    pub(crate) fn compile_files(&self) -> Result<Vec<PathBuf>> {
         let mut files = Vec::new();
         let mut seen = HashSet::new();
 
-        for path in &self.raw_files {
+        for path in &self.files {
             push_unique(&mut files, &mut seen, path)?;
         }
 
-        for dir in &self.raw_dirs {
+        for dir in &self.dirs {
             if !dir.is_dir() {
                 return Err(Error::Message(format!(
                     "C# source directory does not exist: {}",
@@ -109,6 +129,15 @@ impl CSharpSet {
     }
 }
 
+fn normalize_file_name(name: &str) -> String {
+    let name = name.trim();
+    if Path::new(name).extension().is_none() {
+        format!("{name}.cs")
+    } else {
+        name.to_string()
+    }
+}
+
 fn validate_generated_name(name: &str) -> Result<()> {
     let path = Path::new(name);
     let mut components = path.components();
@@ -118,6 +147,7 @@ fn validate_generated_name(name: &str) -> Result<()> {
     let safe = single_normal
         && name.len() > 3
         && !name.contains(':')
+        && path.extension().is_some_and(|ext| ext == "cs")
         && (cfg!(windows) || !name.contains('\\'));
 
     if safe {
@@ -143,363 +173,73 @@ fn push_unique(files: &mut Vec<PathBuf>, seen: &mut HashSet<PathBuf>, path: &Pat
     Ok(())
 }
 
-/// A generated C# file.
-#[derive(Debug, Clone)]
-pub struct CSharpFile {
-    file_name: String,
-    usings: Vec<String>,
-    namespace: Option<String>,
-    items: Vec<CSharpItem>,
-}
-
-impl CSharpFile {
-    pub fn new(file_name: impl Into<String>) -> Self {
-        let file_name = file_name.into();
-        let file_name = if file_name.ends_with(".cs") {
-            file_name
-        } else {
-            format!("{file_name}.cs")
-        };
-        Self {
-            file_name,
-            usings: Vec::new(),
-            namespace: None,
-            items: Vec::new(),
-        }
-    }
-
-    pub fn file_name(&self) -> String {
-        self.file_name.clone()
-    }
-
-    pub fn using(mut self, namespace: impl Into<String>) -> Self {
-        self.usings.push(namespace.into());
-        self
-    }
-
-    pub fn namespace(mut self, namespace: impl Into<String>) -> Self {
-        self.namespace = Some(namespace.into());
-        self
-    }
-
-    #[allow(clippy::should_implement_trait)]
-    pub fn add(mut self, item: impl Into<CSharpItem>) -> Self {
-        self.items.push(item.into());
-        self
-    }
-
-    pub fn raw(mut self, code: impl Into<String>) -> Self {
-        self.items.push(CSharpItem::Raw(code.into()));
-        self
-    }
-
-    pub fn render(&self) -> String {
-        let mut out = String::new();
-        out.push_str("// <auto-generated by rim-rs />\n");
-
-        for namespace in &self.usings {
-            out.push_str("using ");
-            out.push_str(namespace);
-            out.push_str(";\n");
-        }
-        if !self.usings.is_empty() {
-            out.push('\n');
-        }
-
-        if let Some(namespace) = &self.namespace {
-            out.push_str("namespace ");
-            out.push_str(namespace);
-            out.push_str("\n{\n");
-        }
-
-        let indent = usize::from(self.namespace.is_some());
-        for item in &self.items {
-            item.render(&mut out, indent);
-        }
-
-        if self.namespace.is_some() {
-            out.push_str("}\n");
-        }
-
-        out
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum CSharpItem {
-    Class(Class),
-    Raw(String),
-}
-
-impl CSharpItem {
-    fn render(&self, out: &mut String, indent: usize) {
-        match self {
-            Self::Class(class) => class.render(out, indent),
-            Self::Raw(raw) => render_raw(out, raw, indent),
-        }
-    }
-}
-
-impl From<Class> for CSharpItem {
-    fn from(value: Class) -> Self {
-        Self::Class(value)
-    }
-}
-
-/// A generated C# class.
-#[derive(Debug, Clone)]
-pub struct Class {
-    name: String,
-    modifiers: Vec<String>,
-    attributes: Vec<String>,
-    bases: Vec<String>,
-    members: Vec<Member>,
-}
-
-impl Class {
-    pub fn new(name: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            modifiers: vec!["public".to_string()],
-            attributes: Vec::new(),
-            bases: Vec::new(),
-            members: Vec::new(),
-        }
-    }
-
-    pub fn modifier(mut self, modifier: impl Into<String>) -> Self {
-        self.modifiers.push(modifier.into());
-        self
-    }
-
-    pub fn static_(self) -> Self {
-        self.modifier("static")
-    }
-
-    pub fn attribute(mut self, attribute: impl Into<String>) -> Self {
-        self.attributes.push(attribute.into());
-        self
-    }
-
-    pub fn base(mut self, base: impl Into<String>) -> Self {
-        self.bases.push(base.into());
-        self
-    }
-
-    pub fn field(mut self, field: impl Into<Field>) -> Self {
-        self.members.push(Member::Field(field.into()));
-        self
-    }
-
-    pub fn method(mut self, method: Method) -> Self {
-        self.members.push(Member::Method(method));
-        self
-    }
-
-    pub fn raw(mut self, code: impl Into<String>) -> Self {
-        self.members.push(Member::Raw(code.into()));
-        self
-    }
-
-    pub fn render(&self, out: &mut String, indent: usize) {
-        for attribute in &self.attributes {
-            push_indent(out, indent);
-            out.push('[');
-            out.push_str(attribute);
-            out.push_str("]\n");
-        }
-
-        push_indent(out, indent);
-        out.push_str(&self.modifiers.join(" "));
-        out.push_str(" class ");
-        out.push_str(&self.name);
-        if !self.bases.is_empty() {
-            out.push_str(" : ");
-            out.push_str(&self.bases.join(", "));
-        }
-        out.push('\n');
-
-        push_indent(out, indent);
-        out.push_str("{\n");
-
-        for (index, member) in self.members.iter().enumerate() {
-            member.render(out, indent + 1);
-            if index + 1 < self.members.len() {
-                out.push('\n');
-            }
-        }
-
-        push_indent(out, indent);
-        out.push_str("}\n");
-    }
-}
-
-#[derive(Debug, Clone)]
-enum Member {
-    Field(Field),
-    Method(Method),
-    Raw(String),
-}
-
-impl Member {
-    fn render(&self, out: &mut String, indent: usize) {
-        match self {
-            Self::Field(field) => field.render(out, indent),
-            Self::Method(method) => method.render(out, indent),
-            Self::Raw(raw) => render_raw(out, raw, indent),
-        }
-    }
-}
-
-/// A field declaration. A trailing semicolon is added if missing.
-#[derive(Debug, Clone)]
-pub struct Field {
-    declaration: String,
-}
-
-impl Field {
-    pub fn new(declaration: impl Into<String>) -> Self {
-        Self {
-            declaration: declaration.into(),
-        }
-    }
-
-    fn render(&self, out: &mut String, indent: usize) {
-        push_indent(out, indent);
-        out.push_str(self.declaration.trim_end_matches(';'));
-        out.push_str(";\n");
-    }
-}
-
-impl From<&str> for Field {
-    fn from(value: &str) -> Self {
-        Self::new(value)
-    }
-}
-
-impl From<String> for Field {
-    fn from(value: String) -> Self {
-        Self::new(value)
-    }
-}
-
-/// A method with a raw signature and raw body lines.
-#[derive(Debug, Clone)]
-pub struct Method {
-    attributes: Vec<String>,
-    signature: String,
-    body: Vec<String>,
-}
-
-impl Method {
-    pub fn new(signature: impl Into<String>) -> Self {
-        Self {
-            attributes: Vec::new(),
-            signature: signature.into(),
-            body: Vec::new(),
-        }
-    }
-
-    /// `static ClassName()` — useful for `[StaticConstructorOnStartup]` classes.
-    pub fn static_ctor(class_name: impl AsRef<str>) -> Self {
-        Self::new(format!("static {}()", class_name.as_ref()))
-    }
-
-    pub fn attribute(mut self, attribute: impl Into<String>) -> Self {
-        self.attributes.push(attribute.into());
-        self
-    }
-
-    pub fn line(mut self, line: impl Into<String>) -> Self {
-        self.body.push(line.into());
-        self
-    }
-
-    pub fn body(mut self, body: impl Into<String>) -> Self {
-        for line in body.into().lines() {
-            self.body.push(line.to_string());
-        }
-        self
-    }
-
-    fn render(&self, out: &mut String, indent: usize) {
-        for attribute in &self.attributes {
-            push_indent(out, indent);
-            out.push('[');
-            out.push_str(attribute);
-            out.push_str("]\n");
-        }
-
-        push_indent(out, indent);
-        out.push_str(&self.signature);
-        out.push('\n');
-
-        push_indent(out, indent);
-        out.push_str("{\n");
-
-        for line in &self.body {
-            push_indent(out, indent + 1);
-            out.push_str(line);
-            out.push('\n');
-        }
-
-        push_indent(out, indent);
-        out.push_str("}\n");
-    }
-}
-
-fn push_indent(out: &mut String, indent: usize) {
-    for _ in 0..indent {
-        out.push_str("    ");
-    }
-}
-
-fn render_raw(out: &mut String, raw: &str, indent: usize) {
-    for line in raw.lines() {
-        push_indent(out, indent);
-        out.push_str(line);
-        out.push('\n');
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn renders_a_mod_entry_class() {
-        let file = CSharpFile::new("TestMod").using("Verse").add(
-            Class::new("TestMod")
-                .static_()
-                .attribute("StaticConstructorOnStartup")
-                .method(Method::static_ctor("TestMod").line("Log.Message(\"[rim-rs] loaded\");")),
-        );
+    fn keeps_source_code_verbatim() {
+        let mut set = CSharpSet::new();
+        set.add_source("Mod", "// generated by another crate\nclass Mod {}");
 
-        let code = file.render();
-        assert!(code.contains("using Verse;"));
-        assert!(code.contains("[StaticConstructorOnStartup]"));
-        assert!(code.contains("public static class TestMod"));
-        assert!(code.contains("static TestMod()"));
-        assert!(code.contains("Log.Message(\"[rim-rs] loaded\");"));
+        let files = set.source_files().unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].0, "Mod.cs");
+        assert_eq!(files[0].1, "// generated by another crate\nclass Mod {}");
     }
 
     #[test]
-    fn adds_semicolon_to_fields() {
-        let class = Class::new("Test").field("public static int Value = 1");
-        let mut out = String::new();
-        class.render(&mut out, 0);
-        assert!(out.contains("public static int Value = 1;"));
+    fn keeps_existing_cs_extension() {
+        let mut set = CSharpSet::new();
+        set.add_source("Mod.cs", "class Mod {}");
+        set.add_source("Patches.cs", "class Patches {}");
+
+        let names: Vec<_> = set
+            .source_files()
+            .unwrap()
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        assert_eq!(names, ["Mod.cs", "Patches.cs"]);
     }
 
     #[test]
     fn rejects_path_in_generated_file_names() {
         let mut set = CSharpSet::new();
-        set.add(CSharpFile::new("../evil"));
-        assert!(set.render_files().is_err());
+        set.add_source("../evil.cs", "class Evil {}");
+        assert!(set.source_files().is_err());
 
         let mut set = CSharpSet::new();
-        set.add(CSharpFile::new("sub/evil"));
-        assert!(set.render_files().is_err());
+        set.add_source("sub/evil.cs", "class Evil {}");
+        assert!(set.source_files().is_err());
+
+        let mut set = CSharpSet::new();
+        set.add_source("Mod.txt", "class Mod {}");
+        assert!(set.source_files().is_err());
+    }
+
+    #[test]
+    fn rejects_duplicate_generated_file_names() {
+        let mut set = CSharpSet::new();
+        set.add_source("Mod.cs", "class A {}");
+        set.add_source("mod.cs", "class B {}");
+        assert!(matches!(
+            set.source_files(),
+            Err(Error::DuplicateOutputPath(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_references_without_sources() {
+        let mut set = CSharpSet::new();
+        set.add_reference("/tmp/0Harmony.dll");
+        assert!(matches!(
+            set.validate(),
+            Err(Error::CSharpReferenceWithoutSource)
+        ));
+
+        set.add_source("Mod.cs", "class Mod {}");
+        assert!(set.validate().is_ok());
     }
 
     #[test]

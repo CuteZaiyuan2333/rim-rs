@@ -68,6 +68,9 @@ pub enum Error {
     #[error("dotnet command failed:\n{0}")]
     DotnetBuild(String),
 
+    #[error("C# assembly references were provided without any C# source files")]
+    CSharpReferenceWithoutSource,
+
     #[error("invalid mod: {0}")]
     Validation(String),
 

@@ -132,7 +132,7 @@ pub struct ModBuilder {
     game_dir: Option<PathBuf>,
     defs: DefSet,
     patches: PatchSet,
-    csharp: Option<CSharpSet>,
+    csharp: CSharpSet,
     assets: AssetSet,
     options: BuildOptions,
 }
@@ -149,7 +149,7 @@ impl ModBuilder {
             game_dir: None,
             defs: DefSet::new(),
             patches: PatchSet::new(),
-            csharp: None,
+            csharp: CSharpSet::new(),
             assets: AssetSet::new(),
             options: BuildOptions::default(),
         }
@@ -205,10 +205,29 @@ impl ModBuilder {
         self
     }
 
-    pub fn csharp(mut self, f: impl FnOnce(&mut CSharpSet)) -> Self {
-        let mut set = CSharpSet::new();
-        f(&mut set);
-        self.csharp = Some(set);
+    /// Adds an in-memory C# source file. The code is written verbatim.
+    ///
+    /// `.cs` is appended when `file_name` has no extension.
+    pub fn csharp(mut self, file_name: impl Into<String>, code: impl Into<String>) -> Self {
+        self.csharp.add_source(file_name, code);
+        self
+    }
+
+    /// Adds a hand-written `.cs` file.
+    pub fn csharp_file(mut self, path: impl Into<PathBuf>) -> Self {
+        self.csharp.add_file(path);
+        self
+    }
+
+    /// Adds every `.cs` file under a directory (recursively).
+    pub fn csharp_dir(mut self, path: impl Into<PathBuf>) -> Self {
+        self.csharp.add_dir(path);
+        self
+    }
+
+    /// Adds an assembly reference, e.g. a Harmony DLL.
+    pub fn csharp_reference(mut self, path: impl Into<PathBuf>) -> Self {
+        self.csharp.add_reference(path);
         self
     }
 
@@ -261,12 +280,8 @@ impl ModBuilder {
         }
 
         // C#
-        let dll_path = if let Some(csharp) = &self.csharp {
-            if csharp.is_empty() {
-                None
-            } else {
-                Some(self.build_csharp(csharp, &mut staging)?)
-            }
+        let dll_path = if self.csharp.has_sources() {
+            Some(self.build_csharp(&self.csharp, &mut staging)?)
         } else {
             None
         };
@@ -309,16 +324,16 @@ impl ModBuilder {
         let assembly_name = project::sanitize_identifier(&self.name);
         let root_namespace = assembly_name.clone();
 
-        let generated_dir = self.options.work_dir.join("gen/csharp");
-        if generated_dir.exists() {
-            fs::remove_dir_all(&generated_dir).map_err(|error| Error::io(&generated_dir, error))?;
+        let source_dir = self.options.work_dir.join("csharp");
+        if source_dir.exists() {
+            fs::remove_dir_all(&source_dir).map_err(|error| Error::io(&source_dir, error))?;
         }
-        fs::create_dir_all(&generated_dir).map_err(|error| Error::io(&generated_dir, error))?;
+        fs::create_dir_all(&source_dir).map_err(|error| Error::io(&source_dir, error))?;
 
         let mut compile_files = csharp.compile_files()?;
-        for (name, content) in csharp.render_files()? {
-            let path = generated_dir.join(name);
-            fs::write(&path, content).map_err(|error| Error::io(&path, error))?;
+        for (name, code) in csharp.source_files()? {
+            let path = source_dir.join(name);
+            fs::write(&path, code).map_err(|error| Error::io(&path, error))?;
             compile_files.push(path);
         }
 
@@ -379,6 +394,8 @@ impl ModBuilder {
 
         let package_id = self.package_id.as_deref().ok_or(Error::MissingPackageId)?;
         validate_package_id(package_id)?;
+
+        self.csharp.validate()?;
 
         if self.supported_versions.is_empty() {
             return Err(Error::NoSupportedVersions);

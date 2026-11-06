@@ -195,32 +195,33 @@ defs.add(
 </Patch>
 ```
 
-### 3.5 C#：结构化生成 + 手写文件
+### 3.5 C#：源码字符串 + 手写文件
+
+`rim-rs` 不负责生成 C# 语法。外部 C# builder（或手写代码）把最终源码作为字符串传入；`rim-rs` 负责写入文件、生成 `.csproj` 并调用 `dotnet`。
 
 ```rust
-.csharp(|cs| {
-    // 手写文件直接参与编译
-    cs.add_file("src-csharp/MyModMod.cs");
+const MOD_CODE: &str = r#"using Verse;
 
-    // 结构化生成
-    cs.add(
-        CSharpFile::new("MyModMod")
-            .using("Verse")
-            .add(
-                Class::new("MyModMod")
-                    .static_()
-                    .attribute("StaticConstructorOnStartup")
-                    .field("public static readonly HarmonyLib.Harmony Harmony = new(\"miquella.mymod\")")
-                    .method(
-                        Method::static_ctor("MyModMod")
-                            .line("Harmony.PatchAll();"),
-                    ),
-            ),
-    );
-})
+[StaticConstructorOnStartup]
+public static class MyModMod
+{
+    public static readonly HarmonyLib.Harmony Harmony = new("miquella.mymod");
+
+    static MyModMod()
+    {
+        Harmony.PatchAll();
+    }
+}
+"#;
+
+Mod::builder("My Mod")
+    .csharp("MyModMod.cs", MOD_CODE)
+    .csharp_file("src-csharp/Extra.cs")
+    .csharp_dir("src-csharp")
+    .csharp_reference("/path/to/0Harmony.dll")
 ```
 
-生成 `.rim-rs/gen/csharp/MyModMod.cs`：
+源码原样写入 `.rim-rs/csharp/MyModMod.cs`：
 
 ```csharp
 using Verse;
@@ -237,15 +238,11 @@ public static class MyModMod
 }
 ```
 
-使用 Harmony 时需通过 `cs.reference("/path/to/0Harmony.dll")` 显式添加引用。
-
-高级 helper 后续再加：
-
-```rust
-cs.def_of("MyModDefOf", ["HelloThing", "SteelSword"]);
-cs.harmony_patch("Patch_ThingSpawn", "Thing.SpawnSetup")
-    .prefix(|p| p.line("// ..."));
-```
+- `.csharp(name, code)` 原样写入源码；文件名没有扩展名时自动补 `.cs`。
+- `.csharp_file` / `.csharp_dir` 让已有 `.cs` 文件直接参与编译。
+- 只添加引用而没有源码会报错，避免静默跳过构建。
+- 游戏 `Managed/` 目录里存在 `0Harmony.dll` / `HarmonyLib.dll` 时会自动加入引用；放在其他位置时需 `.csharp_reference(...)`。
+- `DefOf`、Harmony Patch 等语法 helper 由外部 C# builder 提供，不在本库实现。
 
 ### 3.6 Assets
 
@@ -310,7 +307,7 @@ rim-rs/
           recipe.rs          # RecipeDef
           ...
         patch.rs             # PatchOperation builder
-        csharp.rs            # Class / Method / Field / Raw
+        csharp.rs            # C# 源码字符串、手写文件、引用收集
         assets.rs
         game.rs              # 1.6 游戏目录/程序集探测
         project.rs           # 生成 .csproj
@@ -334,7 +331,7 @@ pub struct ModBuilder {
     game_dir: Option<PathBuf>,
     defs: DefSet,
     patches: PatchSet,
-    csharp: Option<CSharpSet>,
+    csharp: CSharpSet,
     assets: AssetSet,
     options: BuildOptions,
 }
@@ -388,45 +385,25 @@ impl DefSet {
 
 `ThingDef`、`RecipeDef` 内部都只是 `Def` 的 typed wrapper，最终统一写入 XML。
 
-### 4.5 C# 中间表示
+### 4.5 C# 输入
 
-不追求完整 AST，只做“结构化片段”：
+只保存源码字符串和文件路径，不做 C# 语法中间表示：
 
 ```rust
-pub struct CSharpFile {
-    file_name: String,
-    usings: Vec<String>,
-    namespace: Option<String>,
-    items: Vec<CSharpItem>,
+pub(crate) struct CSharpSet {
+    sources: Vec<SourceFile>, // name + code
+    files: Vec<PathBuf>,      // 手写 .cs
+    dirs: Vec<PathBuf>,       // 递归收集 .cs
+    references: Vec<PathBuf>,
 }
 
-pub enum CSharpItem {
-    Class(Class),
-    Raw(String),
-}
-
-pub struct Class {
+struct SourceFile {
     name: String,
-    modifiers: Vec<String>,
-    attributes: Vec<String>,
-    bases: Vec<String>,
-    members: Vec<Member>,
-}
-
-pub enum Member {
-    Field(Field),       // 原样声明，自动补分号
-    Method(Method),
-    Raw(String),
-}
-
-pub struct Method {
-    attributes: Vec<String>,
-    signature: String,  // e.g. "public static void Foo(int x)"
-    body: Vec<String>,  // 原样行
+    code: String,
 }
 ```
 
-`Field`/`Method` 的声明和 body 先允许原样字符串，避免过早设计 C# 表达式 AST。后续可以逐步把常用结构类型化。
+`build()` 将 `sources` 原样写入 `.rim-rs/csharp/`，再把该目录中的源码、`files` 和 `dirs` 展开后的路径一起写进 `.csproj`。C# 语法生成由外部 builder 负责。
 
 ---
 
@@ -441,7 +418,7 @@ ModBuilder::build()
   5. 写 Patches/*.xml
   6. 导出 Assets
   7. 如果有 C#：
-       a. 生成 C# 文件到 .rim-rs/gen/csharp/
+       a. 将源码字符串写入 .rim-rs/csharp/
        b. 探测 1.6 游戏目录和程序集
        c. 生成 .rim-rs/work/Mod.csproj
        d. dotnet restore + dotnet build
@@ -462,7 +439,7 @@ ModBuilder::build()
   assets/                   # 源资源
   data/                     # 可选：生成用的数据
   .rim-rs/                  # 全部中间产物
-    gen/csharp/
+    csharp/
     work/Mod.csproj
     work/obj/
     out/MyMod.dll
@@ -518,9 +495,9 @@ ModBuilder::build()
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- 实际生成时展开为绝对路径列表，手写 C# 和生成 C# 都在其中 -->
+    <!-- 实际生成时展开为绝对路径列表，手写 C# 和传入的源码字符串都在其中 -->
     <Compile Include="/abs/path/src-csharp/MyModMod.cs" />
-    <Compile Include="/abs/path/.rim-rs/gen/csharp/Generated.cs" />
+    <Compile Include="/abs/path/.rim-rs/csharp/Generated.cs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -529,7 +506,7 @@ ModBuilder::build()
       <Private>false</Private>
     </Reference>
     <!-- UnityEngine / UnityEngine.CoreModule 按需 -->
-    <!-- Harmony 引用通过 extra_reference 添加 -->
+    <!-- 额外程序集引用由 csharp_reference(...) 添加 -->
   </ItemGroup>
 </Project>
 ```
@@ -537,7 +514,7 @@ ModBuilder::build()
 引用策略：
 
 - 默认直接引用本机游戏 DLL，离线可用。
-- `cs.reference(path)` 添加额外程序集（例如 Harmony）。
+- `csharp_reference(path)` 添加额外程序集（例如 Harmony）。
 - 如果检测到游戏目录里的 `0Harmony.dll` / `HarmonyLib.dll`，自动加入。
 - 不默认使用 NuGet；后续可加 `cs.use_rimref()` 作为可选项。
 
@@ -552,7 +529,7 @@ dotnet build   .rim-rs/work/Mod.csproj --no-restore -c Release -o .rim-rs/out
 
 - 保留完整 stdout/stderr。
 - 提取 `error CSxxxx` / `error MSBxxxx`。
-- 报错里带上生成的 `.cs` 路径和行号。
+- 报错里带上 C# 源文件路径和行号。
 - 不删除 `.rim-rs/`，方便用户查看。
 
 ### 5.5 打包
@@ -582,14 +559,14 @@ dotnet build   .rim-rs/work/Mod.csproj --no-restore -c Release -o .rim-rs/out
 
 ### 6.2 第二版
 
-- [x] C# `Class` / `Method` / `Field` / `Raw`
+- [x] C# 源码字符串原样输入
 - [x] 手写 C# 文件参与编译
 - [x] 1.6 游戏目录探测
 - [x] 生成 `.csproj`
 - [x] `dotnet restore/build`
 - [x] DLL 复制到 `Assemblies/`
-- [x] 编译错误解析
-- [ ] `Mod` 入口类 / `DefOf` / Harmony Patch 高层 helper
+- [ ] 编译错误解析（当前仅附带完整 stdout/stderr，未提取诊断）
+- 外部 C# builder 提供：`Mod` 入口类 / `DefOf` / Harmony Patch 高层 helper
 
 ### 6.3 后续
 
@@ -604,7 +581,7 @@ dotnet build   .rim-rs/work/Mod.csproj --no-restore -c Release -o .rim-rs/out
 ### 6.4 明确不做
 
 - 1.7 / 多版本 / `LoadFolders.xml`
-- 完整 C# parser/AST
+- 完整 C# parser/AST 与语法生成（由外部 builder 负责）
 - TOML 配置系统
 - 自动修改 `ModsConfig.xml`
 - 运行时 Rust 代码 / native 桥接
@@ -620,7 +597,7 @@ dotnet build   .rim-rs/work/Mod.csproj --no-restore -c Release -o .rim-rs/out
 | Def | `ThingDef` 字段输出、raw 片段、组合 |
 | 校验 | `packageId` 合法/非法、大小写冲突、禁止文件 |
 | 打包 | staging 结构、zip 内容、幂等性 |
-| C# | Class/Method/Field 输出快照 |
+| C# | 源码原样写入、文件名与路径校验、引用无源码报错 |
 | dotnet | 用 fake `CommandRunner` 测参数和错误解析；真实编译作为可选集成测试 |
 
 所有文件系统测试用 `tempfile`，不污染工作目录。
@@ -630,6 +607,8 @@ dotnet build   .rim-rs/work/Mod.csproj --no-restore -c Release -o .rim-rs/out
 ## 8. 下一步
 
 MVP 已完成并验证：`cargo run -p hello-mod` 能产出完整模组目录、zip 和 DLL，且已用 RimWorld 1.6 `-quicktest` 确认 Def、Patch、C#、贴图都能加载。
+
+审查整改的优先级、验收标准与批次划分见 [`docs/plan/2026-11-05-remediation-plan.md`](../plan/2026-11-05-remediation-plan.md)。
 
 后续优先项：
 
