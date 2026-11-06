@@ -87,7 +87,7 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 
 [[package]]
 name = "hello-mod"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 dependencies = [
  "rim-gen",
 ]
@@ -110,6 +110,13 @@ checksum = "8dc09d2154098bbf4ef54eab6b117a3c24cbbffe94046b16ee6d6d4510584d3a"
 dependencies = [
  "cfg-if",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "kitchen-sink"
+version = "0.1.0"
+dependencies = [
+ "rim-gen",
 ]
 
 [[package]]
@@ -189,7 +196,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "rim-gen"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 dependencies = [
  "quick-xml",
  "tempfile",
