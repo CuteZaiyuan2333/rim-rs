@@ -89,7 +89,7 @@ examples/hello-mod/dist/Rim RS Test.zip
 
 ## C# 输入
 
-`rim-rs` 只负责把源码写入 `.rim-rs/csharp/`、生成 `net472` 项目并调用 `dotnet`，不提供 `Class` / `Method` 之类的语法 builder。
+`rim-rs` 只负责把源码写入 `.rim-rs/csharp/<ModName>/`、生成 `net472` 项目并调用 `dotnet`，不提供 `Class` / `Method` 之类的语法 builder。
 
 ```rust
 Mod::builder("My Mod")
@@ -149,7 +149,7 @@ Mod::builder("My Mod")
 - **只支持 RimWorld 1.6**：`supportedVersions` 只接受 `1.6`，C# 目标框架固定 `net472`。
 - **Builder-first**：没有主 TOML 配置；Rust 代码就是模组定义。
 - **延迟副作用**：只有 `build()` 写文件、调用 `dotnet`、打包和部署。
-- **可检查的中间产物**：生成的 XML、C# 源码、`.csproj`、DLL 保留在 `.rim-rs/` 下。
+- **可检查的中间产物**：生成的 XML、C# 源码、`.csproj`、DLL 保留在 `.rim-rs/` 下；`csharp/` / `work/` / `out/` 按 mod 名隔离，同一 `base_dir` 连续构建多个 mod 互不覆盖。
 - 未覆盖的字段用 `child(...)`、`raw(...)` 或通用 `Def` 表达。
 - 暂不包含：Steam Workshop 上传、`LoadFolders.xml`、1.7、C# 语法生成。
 

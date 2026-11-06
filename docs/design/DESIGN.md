@@ -426,7 +426,7 @@ ModBuilder::build()
        a. 将源码字符串写入 .rim-rs/csharp/
         b. 探测 1.6 游戏目录和程序集（`game_probe(false)` 时跳过，引用全部
            由调用方显式提供，否则报错）
-       c. 生成 .rim-rs/work/Mod.csproj
+       c. 生成 .rim-rs/work/<ModName>/Mod.csproj
        d. dotnet restore + dotnet build
        e. 复制 DLL 到 stage/Assemblies/
   8. 校验 staging
@@ -444,18 +444,20 @@ ModBuilder::build()
   src-csharp/               # 手写 C#
   assets/                   # 源资源
   data/                     # 可选：生成用的数据
-  .rim-rs/                  # 全部中间产物
-    csharp/
-    work/Mod.csproj
-    work/obj/
-    out/MyMod.dll
-    stage/MyMod/
+  .rim-rs/                  # 全部中间产物（按 mod 名称子目录隔离）
+    csharp/<ModName>/
+    work/<ModName>/Mod.csproj
+    work/<ModName>/obj/
+    out/<ModName>/<ModAssembly>.dll
+    stage/<ModName>/
   dist/
     MyMod/
     MyMod.zip
 ```
 
 `.rim-rs/` 和 `dist/` 应加入 `.gitignore`；库本身不自动改用户的 `.gitignore`，但 `rim-rs new` 模板可以生成。
+
+`csharp/`、`work/`、`out/`（和 `stage/`）都以 `sanitize_dir_name(mod name)` 命名的子目录隔离：同一 `base_dir` 连续构建多个 mod 时，中间产物互不覆盖；重建同名 mod 只替换它自己的子目录。`out/` 虽然内部 DLL 名已含 assembly name，但共享目录会被下一次构建整体清除，因此保持同样的隔离规则。
 
 ### 5.2 1.6 游戏探测
 
@@ -527,8 +529,8 @@ ModBuilder::build()
 ### 5.4 C# 编译
 
 ```text
-dotnet restore .rim-rs/work/Mod.csproj
-dotnet build   .rim-rs/work/Mod.csproj --no-restore -c Release -o .rim-rs/out
+dotnet restore .rim-rs/work/<ModName>/Mod.csproj
+dotnet build   .rim-rs/work/<ModName>/Mod.csproj --no-restore -c Release -o .rim-rs/out/<ModName>
 ```
 
 失败时：

@@ -340,7 +340,7 @@ impl ModBuilder {
 
         // C#
         let dll_path = if self.csharp.has_sources() {
-            Some(self.build_csharp(&self.csharp, &mut staging)?)
+            Some(self.build_csharp(&self.csharp, &mut staging, &mod_folder)?)
         } else {
             None
         };
@@ -384,11 +384,19 @@ impl ModBuilder {
         })
     }
 
-    fn build_csharp(&self, csharp: &CSharpSet, staging: &mut Staging) -> Result<PathBuf> {
+    fn build_csharp(
+        &self,
+        csharp: &CSharpSet,
+        staging: &mut Staging,
+        mod_folder: &str,
+    ) -> Result<PathBuf> {
         let assembly_name = project::sanitize_identifier(&self.name);
         let root_namespace = assembly_name.clone();
 
-        let source_dir = self.options.work_dir.join("csharp");
+        // All intermediate directories are isolated per mod, so consecutive
+        // builds of different mods on the same `base_dir` never overwrite
+        // each other's C# sources, project files or DLLs.
+        let source_dir = self.options.work_dir.join("csharp").join(mod_folder);
         if source_dir.exists() {
             fs::remove_dir_all(&source_dir).map_err(|error| Error::io(&source_dir, error))?;
         }
@@ -416,7 +424,7 @@ impl ModBuilder {
             }
         }
 
-        let project_dir = self.options.work_dir.join("work");
+        let project_dir = self.options.work_dir.join("work").join(mod_folder);
         fs::create_dir_all(&project_dir).map_err(|error| Error::io(&project_dir, error))?;
         let csproj = project_dir.join("Mod.csproj");
         let csproj_xml = project::render_csproj(&ProjectSpec {
@@ -427,7 +435,7 @@ impl ModBuilder {
         });
         fs::write(&csproj, csproj_xml).map_err(|error| Error::io(&csproj, error))?;
 
-        let output_dir = self.options.work_dir.join("out");
+        let output_dir = self.options.work_dir.join("out").join(mod_folder);
         if output_dir.exists() {
             fs::remove_dir_all(&output_dir).map_err(|error| Error::io(&output_dir, error))?;
         }
@@ -918,5 +926,50 @@ mod tests {
             matches!(error, Error::DotnetBuild(ref text) if text.contains("error CS0103")),
             "{error}"
         );
+    }
+
+    /// N-009: consecutive builds of two mods on the same `base_dir` must not
+    /// overwrite each other's C# sources, project files or DLL output.
+    #[test]
+    fn isolates_intermediate_dirs_per_mod() {
+        let dir = tempfile::tempdir().unwrap();
+        let libs = dir.path().join("libs");
+        fs::create_dir_all(&libs).unwrap();
+        let reference = libs.join("0Harmony.dll");
+        fs::write(&reference, b"harmony stub").unwrap();
+
+        let options_with = |runner: FakeDotnet| {
+            BuildOptions::default()
+                .base_dir(dir.path())
+                .zip(false)
+                .game_probe(false)
+                .runner(Arc::new(runner))
+        };
+
+        ModBuilder::builder("Test Mod")
+            .package_id("me.testmod")
+            .csharp("Mod.cs", "class First {}")
+            .csharp_reference(&reference)
+            .options(options_with(FakeDotnet::succeeding("TestMod")))
+            .build()
+            .unwrap();
+
+        ModBuilder::builder("Other Mod")
+            .package_id("me.othermod")
+            .csharp("Mod.cs", "class Second {}")
+            .csharp_reference(&reference)
+            .options(options_with(FakeDotnet::succeeding("OtherMod")))
+            .build()
+            .unwrap();
+
+        let work_dir = dir.path().join(".rim-rs");
+        // The first mod's intermediates survived the second build.
+        assert!(work_dir.join("csharp/Test Mod/Mod.cs").is_file());
+        assert!(work_dir.join("work/Test Mod/Mod.csproj").is_file());
+        assert!(work_dir.join("out/Test Mod/TestMod.dll").is_file());
+        // The second mod got its own isolated set.
+        assert!(work_dir.join("csharp/Other Mod/Mod.cs").is_file());
+        assert!(work_dir.join("work/Other Mod/Mod.csproj").is_file());
+        assert!(work_dir.join("out/Other Mod/OtherMod.dll").is_file());
     }
 }
