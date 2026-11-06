@@ -107,7 +107,6 @@ pub struct BuildReport {
     pub deployed_dir: Option<PathBuf>,
     pub zip_path: Option<PathBuf>,
     pub dll_path: Option<PathBuf>,
-    pub warnings: Vec<String>,
 }
 
 /// The root builder.
@@ -265,7 +264,7 @@ impl ModBuilder {
         )?;
 
         // Defs
-        for (file, root) in self.defs.xml_files() {
+        for (file, root) in self.defs.xml_files()? {
             let relative = PathBuf::from("Defs").join(file);
             staging.write(relative, root.to_xml_string()?.as_bytes())?;
         }
@@ -324,7 +323,6 @@ impl ModBuilder {
             deployed_dir,
             zip_path,
             dll_path,
-            warnings: Vec::new(),
         })
     }
 
@@ -404,6 +402,7 @@ impl ModBuilder {
         validate_package_id(package_id)?;
 
         self.csharp.validate()?;
+        self.patches.validate()?;
 
         if self.supported_versions.is_empty() {
             return Err(Error::NoSupportedVersions);

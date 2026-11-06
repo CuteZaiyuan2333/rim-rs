@@ -1,3 +1,4 @@
+use crate::error::{Error, Result};
 use crate::xml::{Element, Node};
 
 pub mod recipe;
@@ -149,8 +150,17 @@ impl DefSet {
     }
 
     /// Produces `(file_name, <Defs> root)` pairs ready for serialization.
-    pub fn xml_files(&self) -> Vec<(String, Element)> {
-        self.files
+    ///
+    /// Validates every `defName` found in the set; see [`validate_def_name`].
+    pub fn xml_files(&self) -> Result<Vec<(String, Element)>> {
+        for file in &self.files {
+            for def in &file.1 {
+                check_def_name(def)?;
+            }
+        }
+
+        let files: Vec<(String, Element)> = self
+            .files
             .iter()
             .filter(|(_, items)| !items.is_empty())
             .map(|(name, items)| {
@@ -160,7 +170,8 @@ impl DefSet {
                 }
                 (name.clone(), root)
             })
-            .collect()
+            .collect();
+        Ok(files)
     }
 }
 
@@ -195,6 +206,38 @@ fn normalize_xml_file_name(name: String) -> String {
     }
 }
 
+/// RimWorld `defName`s are referenced from XML, C# (`DefOf`) and save files.
+/// Anything outside ASCII letters/digits/`_`/`-`/`.` is rejected early instead
+/// of failing at game load time.
+pub fn validate_def_name(def_name: &str) -> Result<()> {
+    let valid = !def_name.is_empty()
+        && def_name.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '.')
+        });
+
+    if valid {
+        Ok(())
+    } else {
+        Err(Error::InvalidDefName(def_name.to_string()))
+    }
+}
+
+/// Validates the `defName` child of a Def, when the Def has one.
+///
+/// Abstract parents (`<ThingDef Name="..." Abstract="True">`) have no
+/// `defName` and are accepted as-is.
+fn check_def_name(def: &Def) -> Result<()> {
+    for node in &def.element.children {
+        if let Node::Element(element) = node
+            && element.name == "defName"
+            && let Some(Node::Text(text)) = element.children.first()
+        {
+            validate_def_name(text)?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,9 +250,44 @@ mod tests {
             file.add(Def::new("ThingDef").child_text("defName", "B"));
         });
 
-        let files = set.xml_files();
+        let files = set.xml_files().unwrap();
         assert_eq!(files.len(), 2);
         assert_eq!(files[0].0, "Generated.xml");
         assert_eq!(files[1].0, "Things.xml");
+    }
+
+    #[test]
+    fn accepts_valid_def_names() {
+        for name in ["A", "RimRsPurpleCube", "Make_X", "item-1", "a.b_2"] {
+            assert!(validate_def_name(name).is_ok(), "{name}");
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_def_names() {
+        for name in ["", "has space", "不", "a\tb", "$x"] {
+            assert!(validate_def_name(name).is_err(), "{name}");
+        }
+    }
+
+    #[test]
+    fn xml_files_validates_def_names() {
+        let mut set = DefSet::new();
+        set.add(Def::new("ThingDef").child_text("defName", "bad name"));
+        assert!(matches!(
+            set.xml_files(),
+            Err(Error::InvalidDefName(name)) if name == "bad name"
+        ));
+    }
+
+    #[test]
+    fn abstract_defs_without_def_name_pass() {
+        let mut set = DefSet::new();
+        set.add(
+            Def::new("ThingDef")
+                .attr("Name", "Base")
+                .attr("Abstract", "True"),
+        );
+        assert!(set.xml_files().is_ok());
     }
 }

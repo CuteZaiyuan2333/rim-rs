@@ -52,8 +52,7 @@ fn main() -> Result<()> {
 
 - [设计文档](docs/design/DESIGN.md)
 - [调研记录](docs/design/RESEARCH.md)
-- [初次代码审查](docs/review/2026-11-05-initial-review.md)
-- [审查整改计划](docs/plan/2026-11-05-remediation-plan.md)
+- [代码审查](docs/review/2026-11-06-review.md)
 
 ## 快速开始
 

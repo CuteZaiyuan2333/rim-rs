@@ -122,6 +122,7 @@ fn candidates() -> Vec<PathBuf> {
         paths.push(home.join("Games/RimWorld"));
         paths.push(home.join(".steam/steam/steamapps/common/RimWorld"));
         paths.push(home.join(".local/share/Steam/steamapps/common/RimWorld"));
+        paths.push(home.join("Library/Application Support/Steam/steamapps/common/RimWorld"));
         paths.push(home.join("GOG Games/RimWorld"));
     }
 

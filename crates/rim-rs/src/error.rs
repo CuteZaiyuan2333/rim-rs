@@ -45,6 +45,11 @@ pub enum Error {
     #[error("asset directory mapping source is not a directory: {0} (use map_file for files)")]
     AssetDirExpected(PathBuf),
 
+    #[error(
+        "invalid defName `{0}`: use ASCII letters, digits, `_`, `-` and `.`; it must not be empty"
+    )]
+    InvalidDefName(String),
+
     #[error("invalid relative output path: {0}")]
     InvalidOutputPath(String),
 
@@ -76,6 +81,12 @@ pub enum Error {
 
     #[error("C# assembly references were provided without any C# source files")]
     CSharpReferenceWithoutSource,
+
+    #[error("patch file `{0}` contains no PatchOperation")]
+    EmptyPatch(String),
+
+    #[error("PatchOperation `{0}` has no xpath, value or content")]
+    EmptyOperation(String),
 
     #[error("invalid mod: {0}")]
     Validation(String),

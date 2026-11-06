@@ -1,3 +1,4 @@
+use crate::error::{Error, Result};
 use crate::xml::{Element, Node};
 
 /// A PatchOperations file.
@@ -129,6 +130,25 @@ impl PatchSet {
         self.patches.is_empty()
     }
 
+    /// Rejects empty patch files and operations without `xpath`/`value`/content,
+    /// which would produce well-formed XML that RimWorld cannot apply.
+    pub(crate) fn validate(&self) -> Result<()> {
+        for patch in &self.patches {
+            if patch.operations.is_empty() {
+                return Err(Error::EmptyPatch(patch.file_name()));
+            }
+            for operation in &patch.operations {
+                let is_empty = operation.xpath.is_none()
+                    && operation.value.is_none()
+                    && operation.extras.is_empty();
+                if is_empty {
+                    return Err(Error::EmptyOperation(operation.class.clone()));
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn xml_files(&self) -> Vec<(String, Element)> {
         self.patches
             .iter()
@@ -154,5 +174,35 @@ mod tests {
         assert!(xml.contains("<xpath>Defs/ThingDef[defName=&quot;Gun&quot;]/statBases</xpath>"));
         assert!(xml.contains("<value>"));
         assert!(xml.contains("<MarketValue>200</MarketValue>"));
+    }
+
+    #[test]
+    fn rejects_an_empty_patch() {
+        let set = PatchSet {
+            patches: vec![Patch::new("Empty.Patches")],
+        };
+        assert!(
+            matches!(set.validate(), Err(Error::EmptyPatch(name)) if name == "Empty.Patches.xml")
+        );
+    }
+
+    #[test]
+    fn rejects_an_operation_without_content() {
+        let set = PatchSet {
+            patches: vec![Patch::new("Patches").add(Operation::new("PatchOperationAdd"))],
+        };
+        assert!(
+            matches!(set.validate(), Err(Error::EmptyOperation(class)) if class == "PatchOperationAdd")
+        );
+    }
+
+    #[test]
+    fn accepts_a_fully_configured_operation() {
+        let set = PatchSet {
+            patches: vec![Patch::new("Patches").op("PatchOperationAdd", |op| {
+                op.xpath("Defs/ThingDef").value(Element::new("x").text("1"));
+            })],
+        };
+        assert!(set.validate().is_ok());
     }
 }

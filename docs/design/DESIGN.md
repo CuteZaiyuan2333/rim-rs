@@ -344,7 +344,6 @@ pub struct BuildReport {
     pub deployed_dir: Option<PathBuf>,
     pub zip_path: Option<PathBuf>,
     pub dll_path: Option<PathBuf>,
-    pub warnings: Vec<String>,
 }
 ```
 
@@ -614,7 +613,7 @@ dotnet build   .rim-rs/work/Mod.csproj --no-restore -c Release -o .rim-rs/out
 
 MVP 已完成并验证：`cargo run -p hello-mod` 能产出完整模组目录、zip 和 DLL，且已用 RimWorld 1.6 `-quicktest` 确认 Def、Patch、C#、贴图都能加载。
 
-审查整改的优先级、验收标准与批次划分见 [`docs/plan/2026-11-05-remediation-plan.md`](../plan/2026-11-05-remediation-plan.md)。
+审查跟进与后续工作项见 [`docs/review/2026-11-06-review.md`](../review/2026-11-06-review.md)。
 
 后续优先项：
 

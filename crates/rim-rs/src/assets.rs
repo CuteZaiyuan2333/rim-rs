@@ -123,16 +123,22 @@ impl AssetSet {
             }
         }
 
-        sort_output(&mut output);
+        sort_output(&mut output)?;
         Ok(output)
     }
 }
 
-/// Sorts mappings by destination so staging writes (and any collision errors)
-/// are independent of filesystem iteration order.
-fn sort_output(output: &mut Vec<(PathBuf, PathBuf)>) {
+/// Sorts mappings by destination so staging writes are independent of
+/// filesystem iteration order, and rejects two mappings with the same
+/// destination instead of letting one silently win.
+fn sort_output(output: &mut [(PathBuf, PathBuf)]) -> Result<()> {
     output.sort_by(|left, right| left.1.cmp(&right.1));
-    output.dedup_by(|left, right| left.1 == right.1);
+    for pair in output.windows(2) {
+        if pair[0].1 == pair[1].1 {
+            return Err(Error::DuplicateOutputPath(pair[0].1.display().to_string()));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -208,5 +214,25 @@ mod tests {
         assets.map_file(&file, "../outside.png");
 
         assert!(assets.collect().is_err());
+    }
+
+    #[test]
+    fn rejects_two_mappings_to_the_same_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("first/a.png");
+        std::fs::create_dir_all(first.parent().unwrap()).unwrap();
+        std::fs::write(&first, b"first").unwrap();
+        let second = dir.path().join("second/a.png");
+        std::fs::create_dir_all(second.parent().unwrap()).unwrap();
+        std::fs::write(&second, b"second").unwrap();
+
+        let mut assets = AssetSet::new();
+        assets.map_file(&first, "Textures/a.png");
+        assets.map_file(&second, "Textures/a.png");
+
+        assert!(matches!(
+            assets.collect(),
+            Err(Error::DuplicateOutputPath(path)) if path == "Textures/a.png"
+        ));
     }
 }
