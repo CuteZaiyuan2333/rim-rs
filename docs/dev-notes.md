@@ -42,3 +42,28 @@
 ```
 
 `flammability: 0.4` 说明生成的 Patch 已生效；`recipe attached to CraftingSpot` 说明配方通过 `recipeUsers` 挂到了工作台上。
+
+## kitchen-sink 探边记录（2026-11-08）
+
+新增 `examples/kitchen-sink`：一个刻意覆盖尽可能多内容类型的测试模组（物品 / 武器 / 服装 / 墙 / 工作台 / 合成配方 / 手术配方 / BodyDef+BodyPartDef / 生物+PawnKind / Research / Terrain / 自定义 StatDef / 自定义 IssueDef+PreceptDef / 三种 PatchOperation / C# 加载探针），贴图全部为程序生成的紫黑棋盘占位图（`scripts/make_textures.py`）。
+
+验证环境：Proton（`~/.local/bin/wine` shim → Steam Proton，prefix 为 steam compatdata 2321747809）跑 `-quicktest` 多轮 + 手动进游戏逐项检查，全部通过。修复链与发现：
+
+| 问题 | 定性 | 处理 |
+|---|---|---|
+| `blocksWind` 应为 `blockWind` | 例程笔误（游戏未知字段报错兜底） | 修 example |
+| BodyDef 子部件缺 `<parts>` 包装时，报错只指向内层 `<li>`，不含外层 context | 游戏报错形态易误判 | 修 example；候选工具链特性：在 DSL 侧构建时校验 body 部件嵌套 |
+| `PawnKindDef.wildSpawn_spawnWildness` 在 1.6 已删除，野生生成改由 `ecoSystemWeight` + `wildGroupSize` 驱动 | **1.6 语义变化** | 改用新字段 |
+| `recipeMaker` 不是 RecipeDef 的合法字段；`researchPrerequisite` 是 RecipeDef 的直接字段（不在 recipeMaker 下） | 1.6 字段归属易混淆 | 修正写法 |
+| 显式 RecipeDef `Make_RimRsOrganItem` 与 ThingDef `recipeMaker` 隐式生成的配方同名 → `Adding duplicate RecipeDef name` | **机制发现**：可制造移植体的原版惯例是只在 ThingDef 上写 recipeMaker（隐式配方 defName 约定 `Make_<defName>`），不应再写同名显式 RecipeDef | 改为 recipeMaker 路径并删除显式配方，两条探针均通过 |
+| `OverHead` → `Overhead`（ApparelLayerDef defName 大小写敏感） | 例程笔误 | 修 example |
+| `Wood_Log` → `WoodLog`（1.6 木头资源 defName 改名，老名不解析） | **1.6 语义变化** | 改用新名 |
+| C# `RecipeDef.products` 是 `List<ThingDefCountClass>` 而非字典 | 真实 API 形态 | 修 C# |
+| `PatchOperationRemove` 对只存在于抽象父 Def 的节点（`burnableByRecipe` 来自 `ApparelNoQualityBase`）必失败 | **语义发现**：patch 操作运行在 XML 继承解析之前 | 保留为故意失败项；文档化该语义 |
+
+rim-gen 库自身暴露的 API 缺口（本轮发现，尚待处理）：
+
+- 所有 typed builder（ThingDef / RecipeDef / ResearchProjectDef / TerrainDef / HediffDef）都没有 `child_text` 便捷方法，写大型 Def 时只能反复 `child(Element::new(name).text(value))`。
+- `HediffStage` 是 pub 结构体但从未从 crate 导出，`HediffDef::stage` API 外部实际不可用（example 只能用 `child` 手写 `<stages>`，与文档宣称的 typed capability 相悖）。
+
+环境旁证：本机游戏 `RimWorldWin64_Data/Managed` 中不存在 0Harmony.dll，纯 Write 阶段验证的"自动引用游戏 Harmony"逻辑在本机不会命中；当前 C# 输入不涉及 Harmony，不构成阻塞。

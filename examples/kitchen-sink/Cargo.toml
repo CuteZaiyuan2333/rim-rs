@@ -1,0 +1,12 @@
+[package]
+name = "kitchen-sink"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+rim-gen = { path = "../../crates/rim-gen" }
+
+[[bin]]
+name = "kitchen-sink"
+path = "src/main.rs"
