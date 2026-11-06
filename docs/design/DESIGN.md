@@ -287,6 +287,7 @@ Mod::builder("My Mod")
 | `configuration` | `Release` |
 | `game_probe` | `true`（`false` 时 C# 构建跳过游戏探测，引用全部显式提供；否则未提供任何显式引用直接报错） |
 | `runner` | 真实进程（`SystemRunner`）；测试可注入 fake `CommandRunner` |
+| `dry_run` | `false`（`true` 时只 staging + 校验，不编译 / 打包 / 部署；含 C# 输入直接报错） |
 
 ---
 
@@ -417,6 +418,7 @@ struct SourceFile {
 ```text
 ModBuilder::build()
   1. 校验 metadata（packageId、name、supportedVersions：必须非空且只能是 `1.6`；`supported_versions(...)` 为替换语义）
+     （`dry_run(true)` 且有 C# 输入 → 在这里直接报错，任何文件都不写）
   2. 准备 .rim-rs/stage/<ModName>/
   3. 写 About/About.xml
   4. 写 Defs/*.xml
@@ -434,6 +436,10 @@ ModBuilder::build()
   10. 可选 deploy 到 Mods/
   11. 返回 BuildReport
 ```
+
+`dry_run(true)` 时流水线止于步骤 8（校验 staging）：跳过 C# 编译（见上，
+有 C# 输入直接拒绝）、打包（9）与部署（10）；`BuildReport` 的 `dll_path`、
+`zip_path`、`deployed_dir` 均为 `None`。
 
 ### 5.1 目录约定
 
@@ -581,6 +587,7 @@ dotnet build   .rim-rs/work/<ModName>/Mod.csproj --no-restore -c Release -o .rim
 
 - [x] `RecipeDef` typed builder
 - [x] CI（fmt / clippy / test / doc，见 `.github/workflows/ci.yml`）
+- [x] `dry_run`（staging + 校验，不编译 / 打包 / 部署）
 - [ ] `HediffDef`、`ResearchProjectDef` 等 typed builder
 - [ ] `rim-rs new` 项目模板
 - [x] 部署到 `Mods/`

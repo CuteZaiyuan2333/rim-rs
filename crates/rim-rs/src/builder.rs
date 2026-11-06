@@ -54,6 +54,18 @@ pub struct BuildOptions {
     /// `SystemRunner` spawns a real process; tests can inject a fake
     /// [`CommandRunner`] to build without the .NET SDK.
     pub runner: Option<Arc<dyn CommandRunner>>,
+    /// Stage and validate only, without compiling C#, zipping or deploying
+    /// (default `false`).
+    ///
+    /// A dry run stops after staging and [`crate::package::validate_mod_dir`];
+    /// no `dist/` directory is created, no `dotnet` process runs and nothing
+    /// is deployed. All fields of [`BuildReport`] except `mod_dir` (which
+    /// still follows `keep_staging`) are `None`.
+    ///
+    /// Mods with C# input are rejected: a skipped C# compile stage would
+    /// stage a mod without any DLL, which can never load, so this is refused
+    /// up front instead of silently producing a broken layout.
+    pub dry_run: bool,
 }
 
 impl Default for BuildOptions {
@@ -69,6 +81,7 @@ impl Default for BuildOptions {
             mods_dir: None,
             game_probe: true,
             runner: None,
+            dry_run: false,
         }
     }
 }
@@ -86,6 +99,7 @@ impl fmt::Debug for BuildOptions {
             .field("mods_dir", &self.mods_dir)
             .field("game_probe", &self.game_probe)
             .field("runner", &self.runner.as_ref().map(|_| "injected"))
+            .field("dry_run", &self.dry_run)
             .finish()
     }
 }
@@ -152,6 +166,14 @@ impl BuildOptions {
     /// See [`BuildOptions::runner`] for the documented semantics.
     pub fn runner(mut self, value: Arc<dyn CommandRunner>) -> Self {
         self.runner = Some(value);
+        self
+    }
+
+    /// Sets whether the build only stages and validates.
+    ///
+    /// See [`BuildOptions::dry_run`] for the documented semantics.
+    pub fn dry_run(mut self, value: bool) -> Self {
+        self.dry_run = value;
         self
     }
 }
@@ -339,7 +361,11 @@ impl ModBuilder {
         }
 
         // C#
-        let dll_path = if self.csharp.has_sources() {
+        let dll_path = if self.options.dry_run {
+            // Rejected up front for mods with C# input; a dry run never
+            // reaches the compile stage.
+            None
+        } else if self.csharp.has_sources() {
             Some(self.build_csharp(&self.csharp, &mut staging, &mod_folder)?)
         } else {
             None
@@ -347,7 +373,7 @@ impl ModBuilder {
 
         package::validate_mod_dir(&mod_dir)?;
 
-        let zip_path = if self.options.zip {
+        let zip_path = if self.options.zip && !self.options.dry_run {
             fs::create_dir_all(&self.options.dist_dir)
                 .map_err(|error| Error::io(&self.options.dist_dir, error))?;
             let zip_path = self.options.dist_dir.join(format!("{mod_folder}.zip"));
@@ -357,7 +383,7 @@ impl ModBuilder {
             None
         };
 
-        let deployed_dir = if self.options.deploy {
+        let deployed_dir = if self.options.deploy && !self.options.dry_run {
             let mods_dir = match &self.options.mods_dir {
                 Some(directory) => directory.clone(),
                 None => GameInstall::locate(self.game_dir.as_deref())?.mods_dir(),
@@ -485,6 +511,10 @@ impl ModBuilder {
             && self.csharp.references().is_empty()
         {
             return Err(Error::GameProbeWithoutReferences);
+        }
+
+        if self.options.dry_run && self.csharp.has_sources() {
+            return Err(Error::DryRunWithCsharpSources);
         }
 
         if self.supported_versions.is_empty() {
@@ -926,6 +956,61 @@ mod tests {
             matches!(error, Error::DotnetBuild(ref text) if text.contains("error CS0103")),
             "{error}"
         );
+    }
+
+    /// N-012: a dry run stages and validates but produces no side effects.
+    #[test]
+    fn dry_run_only_stages_and_validates() {
+        let dir = tempfile::tempdir().unwrap();
+        let mods_dir = dir.path().join("Mods");
+
+        let report = ModBuilder::builder("Test Mod")
+            .package_id("me.testmod")
+            .defs(|defs| {
+                defs.add(ThingDef::new("TestThing").label("test thing"));
+            })
+            .options(
+                BuildOptions::default()
+                    .base_dir(dir.path())
+                    .deploy(true)
+                    .mods_dir(&mods_dir)
+                    .dry_run(true),
+            )
+            .build()
+            .unwrap();
+
+        let mod_dir = report.mod_dir.as_ref().expect("staging is kept");
+        assert!(mod_dir.join("About/About.xml").is_file());
+        assert!(mod_dir.join("Defs/Generated.xml").is_file());
+
+        // No side effects beyond staging: no zip, no deployment, no DLL.
+        assert!(report.zip_path.is_none());
+        assert!(report.deployed_dir.is_none());
+        assert!(report.dll_path.is_none());
+        assert!(!dir.path().join("dist").exists());
+        assert!(!mods_dir.exists());
+    }
+
+    /// N-012: dry runs of mods with C# input are rejected up front instead of
+    /// staging a mod without its DLL.
+    #[test]
+    fn rejects_a_dry_run_of_a_mod_with_csharp_sources() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = ModBuilder::builder("Test Mod")
+            .package_id("me.testmod")
+            .csharp("Mod.cs", "class Mod {}")
+            .options(
+                BuildOptions::default()
+                    .base_dir(dir.path())
+                    .zip(false)
+                    .dry_run(true),
+            )
+            .build()
+            .unwrap_err();
+
+        assert!(matches!(error, Error::DryRunWithCsharpSources), "{error}");
+        // Nothing was staged before the rejection.
+        assert!(!dir.path().join(".rim-rs").exists());
     }
 
     /// N-009: consecutive builds of two mods on the same `base_dir` must not

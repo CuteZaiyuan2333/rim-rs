@@ -42,6 +42,12 @@ pub enum Error {
     )]
     GameProbeWithoutReferences,
 
+    #[error(
+        "dry_run cannot build a mod with C# sources; a skipped C# compile would stage \
+         a mod without any DLL. Run a normal build instead"
+    )]
+    DryRunWithCsharpSources,
+
     #[error("asset source does not exist: {0}")]
     AssetSourceMissing(PathBuf),
 

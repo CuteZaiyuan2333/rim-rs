@@ -130,6 +130,12 @@ Mod::builder("My Mod")
 时跳过探测（无游戏环境也能编译 C#），引用责任完全转移到调用方；
 `.game_dir(...)` 对此时的 C# 阶段无效果，只影响 deploy 探测。
 
+`dry_run` 默认关闭。设为 `true` 时只展开 staging 并校验：不调 `dotnet`、不建
+`dist/`、不打包 zip、不部署；`BuildReport` 除 `mod_dir`（仍遵循 `keep_staging`）
+外均为 `None`。这是后续 `rim-rs new` / CLI 的前置能力。含 C# 输入的 mod 在
+dry-run 下会直接报错：跳过编译会留下没有 DLL 的 staging，无法被游戏加载，
+所以拒绝而不是静默产出残缺布局。
+
 ## 模块
 
 | 模块 | 用途 |
