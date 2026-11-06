@@ -588,7 +588,7 @@ dotnet build   .rim-rs/work/<ModName>/Mod.csproj --no-restore -c Release -o .rim
 - [x] `RecipeDef` typed builder
 - [x] CI（fmt / clippy / test / doc，见 `.github/workflows/ci.yml`）
 - [x] `dry_run`（staging + 校验，不编译 / 打包 / 部署）
-- [ ] `HediffDef`、`ResearchProjectDef` 等 typed builder
+- [x] `HediffDef`、`ResearchProjectDef`、`TerrainDef` typed builder
 - [ ] `rim-rs new` 项目模板
 - [x] 部署到 `Mods/`
 - [x] `-quicktest` 冒烟测试
@@ -615,7 +615,7 @@ dotnet build   .rim-rs/work/<ModName>/Mod.csproj --no-restore -c Release -o .rim
 | 校验 | `packageId` 合法/非法、大小写冲突、禁止文件 |
 | 打包 | staging 结构、zip 内容、幂等性、zip 条目顺序与字节一致性 |
 | C# | 源码原样写入、文件名与路径校验、引用无源码报错 |
-| dotnet | 用 fake `CommandRunner` 测参数、诊断摘要与无诊断回退；真实编译作为可选集成测试 |
+| dotnet | 用 fake `CommandRunner` 测参数、诊断摘要与无诊断回退；`builder.rs::builds_csharp_with_a_real_dotnet_and_game_link` 在设置 `RIMWORLD_DIR` + 本机 `dotnet` 时以 `--ignored` 验证真实编译链路 |
 
 所有文件系统测试用 `tempfile`，不污染工作目录。
 
@@ -629,7 +629,7 @@ MVP 已完成并验证：`cargo run -p hello-mod` 能产出完整模组目录、
 
 后续优先项：
 
-1. 更多 typed Def builder（`HediffDef`、`ResearchProjectDef` 等），优先覆盖实际模组常用字段。
+1. 更多 typed Def builder —— `HediffDef`、`ResearchProjectDef`、`TerrainDef` 已完成；继续按需补充其他常用 Def 类型。
 2. `DefOf` / Harmony 高层 helper，减少 raw C# 字符串。
 3. `rim-rs new` 模板与 `.gitignore` 生成。
 4. 增量构建与可选的 RimRef/NuGet 引用模式。

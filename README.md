@@ -141,7 +141,7 @@ dry-run 下会直接报错：跳过编译会留下没有 DLL 的 staging，无�
 | 模块 | 用途 |
 |---|---|
 | `xml` | 自有 XML 树，`quick-xml` 序列化；文本自动转义，`raw()` 逃生口 |
-| `defs` | `Def`、`DefSet`、`IntoDef`；`ThingDef`、`RecipeDef` 类型化 builder |
+| `defs` | `Def`、`DefSet`、`IntoDef`；`ThingDef`、`RecipeDef`、`HediffDef`、`ResearchProjectDef`、`TerrainDef` 类型化 builder |
 | `patch` | `Patch` / `Operation` / `PatchSet` |
 | `csharp` | 接收 C# 源码字符串、手写 `.cs` 文件和额外程序集引用；不做语法生成 |
 | `assets` | `map_file` / `map_dir` 资产映射、`textures` / `sounds` / `languages`（仅目录）、预览图、路径穿越校验 |
@@ -191,5 +191,6 @@ RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps
 补充验证：
 
 - `RIMWORLD_DIR=... cargo test -p rim-rs --lib detects_an_env -- --ignored`：真实游戏安装的探测测试（默认 `#[ignore]`）。
+- `RIMWORLD_DIR=... cargo test -p rim-rs --lib builds_csharp_with_a_real_dotnet_and_game_link -- --ignored`：真实 `dotnet` 的 C# 端到端编译测试（需要本机 .NET SDK + 游戏 DLL；默认 `#[ignore]`）。
 - zip 打包确定性：条目按路径排序、时间戳固定为 1980-01-01，相同输入产出字节一致的 zip。
 - CI（`.github/workflows/ci.yml`）在 push / PR 上运行上述 fmt / clippy / test / doc 检查，不依赖 RimWorld 或 .NET SDK。

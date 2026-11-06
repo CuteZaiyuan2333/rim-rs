@@ -958,6 +958,49 @@ mod tests {
         );
     }
 
+    /// N-014: end-to-end C# compilation through the real toolchain.
+    ///
+    /// Opt-in like `game::tests::detects_an_env`: set `RIMWORLD_DIR` to a
+    /// RimWorld 1.6 install and run with `--ignored` on a machine that has a
+    /// local `dotnet` SDK.
+    #[test]
+    #[ignore = "requires RIMWORLD_DIR pointing at a RimWorld 1.6 install and a local dotnet SDK; run with --ignored"]
+    fn builds_csharp_with_a_real_dotnet_and_game_link() {
+        let root =
+            std::env::var_os("RIMWORLD_DIR").expect("set RIMWORLD_DIR to a RimWorld 1.6 install");
+        let dir = tempfile::tempdir().unwrap();
+
+        const MOD_CODE: &str = r#"using Verse;
+
+[StaticConstructorOnStartup]
+public static class RimRsDotnetLinkTest
+{
+    static RimRsDotnetLinkTest() => Log.Message("[rim-rs] real dotnet link test");
+}
+"#;
+
+        let report = ModBuilder::builder("RimRs Dotnet Link")
+            .package_id("me.dotnetlink")
+            .csharp("RimRsDotnetLink.cs", MOD_CODE)
+            .game_dir(root)
+            .options(BuildOptions::default().base_dir(dir.path()).zip(false))
+            .build()
+            .unwrap();
+
+        let dll = report
+            .dll_path
+            .expect("a real dotnet build must produce a DLL");
+        assert!(dll.is_file());
+        assert!(
+            report
+                .mod_dir
+                .as_ref()
+                .unwrap()
+                .join("Assemblies/RimRsDotnetLink.dll")
+                .is_file()
+        );
+    }
+
     /// N-012: a dry run stages and validates but produces no side effects.
     #[test]
     fn dry_run_only_stages_and_validates() {

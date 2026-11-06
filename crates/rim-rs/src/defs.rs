@@ -1,10 +1,16 @@
 use crate::error::{Error, Result};
 use crate::xml::{Element, Node};
 
+pub mod hediff;
 pub mod recipe;
+pub mod research;
+pub mod terrain;
 pub mod thing;
 
+pub use hediff::HediffDef;
 pub use recipe::RecipeDef;
+pub use research::ResearchProjectDef;
+pub use terrain::TerrainDef;
 pub use thing::ThingDef;
 
 /// A generic RimWorld Def, backed by an XML element.
@@ -94,6 +100,24 @@ impl IntoDef for ThingDef {
 }
 
 impl IntoDef for RecipeDef {
+    fn into_def(self) -> Def {
+        self.build()
+    }
+}
+
+impl IntoDef for HediffDef {
+    fn into_def(self) -> Def {
+        self.build()
+    }
+}
+
+impl IntoDef for ResearchProjectDef {
+    fn into_def(self) -> Def {
+        self.build()
+    }
+}
+
+impl IntoDef for TerrainDef {
     fn into_def(self) -> Def {
         self.build()
     }
