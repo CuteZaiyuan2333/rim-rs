@@ -63,7 +63,7 @@ pub enum Error {
     #[error("source file does not exist: {0}")]
     SourceFileMissing(PathBuf),
 
-    #[error("symlink in the collected tree is not allowed: {0}")]
+    #[error("symlink is not allowed: {0}")]
     SymlinkNotAllowed(PathBuf),
 
     #[error("unsupported file type in `{0}` (only plain files and directories can be staged)")]
@@ -124,8 +124,8 @@ pub enum Error {
     #[error("PatchOperation `{0}` has no xpath, value or content")]
     EmptyOperation(String),
 
-    #[error("invalid mod: {0}")]
-    Validation(String),
+    #[error("staging directory is missing About/About.xml: {0}")]
+    AboutXmlMissing(PathBuf),
 
     #[error("zip error: {0}")]
     Zip(String),

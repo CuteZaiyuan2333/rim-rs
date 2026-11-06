@@ -186,20 +186,14 @@ fn xml_unescape(value: &str) -> String {
 pub fn validate_mod_dir(root: &Path) -> Result<()> {
     let about = root.join("About/About.xml");
     if !about.is_file() {
-        return Err(Error::Validation(format!(
-            "missing About/About.xml in {}",
-            root.display()
-        )));
+        return Err(Error::AboutXmlMissing(root.to_path_buf()));
     }
 
     for entry in WalkDir::new(root).follow_links(false) {
-        let entry = entry.map_err(|err| Error::Validation(err.to_string()))?;
+        let entry = entry.map_err(|err| Error::walk(root, err))?;
 
         if entry.file_type().is_symlink() {
-            return Err(Error::Validation(format!(
-                "symlink is not allowed in packaged mod: {}",
-                entry.path().display()
-            )));
+            return Err(Error::SymlinkNotAllowed(entry.path().to_path_buf()));
         }
         if !entry.file_type().is_file() {
             continue;
@@ -254,12 +248,9 @@ pub fn zip_dir(source: &Path, destination: &Path) -> Result<()> {
 
     let mut entries: Vec<(String, PathBuf)> = Vec::new();
     for entry in WalkDir::new(source).follow_links(false) {
-        let entry = entry.map_err(|err| Error::Zip(err.to_string()))?;
+        let entry = entry.map_err(|err| Error::walk(source, err))?;
         if entry.file_type().is_symlink() {
-            return Err(Error::Zip(format!(
-                "symlink is not allowed in zip: {}",
-                entry.path().display()
-            )));
+            return Err(Error::SymlinkNotAllowed(entry.path().to_path_buf()));
         }
         if !entry.file_type().is_file() {
             continue;
@@ -457,6 +448,19 @@ mod tests {
         let mut staging = Staging::new(dir.path()).unwrap();
         staging.write("Textures/Foo.png", b"a").unwrap();
         assert!(staging.write("Textures/foo.png", b"b").is_err());
+    }
+
+    #[test]
+    fn rejects_a_stage_dir_without_an_about_xml() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("mod");
+        fs::create_dir_all(root.join("Textures")).unwrap();
+
+        let error = validate_mod_dir(&root).unwrap_err();
+        assert!(
+            matches!(error, Error::AboutXmlMissing(ref path) if *path == root),
+            "{error}"
+        );
     }
 
     #[test]

@@ -23,7 +23,21 @@
 - 候选探测判据（`looks_like_rimworld` 的 `Data/Core` 分支）与 `from_root` 判据不完全一致：多余候选会以 `NotRimWorld` 报错，错误信息仍可定位，影响面约等于零。
 - 通用 `Def::new(name)` 的 `name` 是元素名，与 typed builder 的 `new(defName)` 语义相反；是 API 命名问题，留待 0.2 的 API 复盘一并处理。
 - `Error::Message` 作为 catch-all 的类型化缺失：同 N-011，暂缓。
+  （2026-11-07 收尾批次 F 已解决：`Error::Message` 与 `Error::Validation` 已移除，全部错误均类型化，见下文 §4。）
 
 ## 4. 版本
 
 - 工作区版本定为 `0.1.0-beta.1`，快照存入分支 `release/0.1.0-beta.1`（不发布 crates.io）。
+
+## 5. 收尾批次 F（2026-11-07，定版前的最后清理）
+
+随 crate 更名为 `rim-gen` 的重构提交之后补做的一轮纯收敛修改，无行为变化、无新功能：
+
+| 问题 | 修复方式 |
+|---|---|
+| `Error::Validation(String)` 是 `package.rs` 里残余的 catch-all | 拆为具体变体：缺失 `About/About.xml` 时报 `Error::AboutXmlMissing`，staging 校验中的 walk 失败走 `Error::walk`，symlink 检查报 `Error::SymlinkNotAllowed`（与 assets / csharp / copy_dir_all 处的同一检查共用该变体）；`zip_dir` 的 walk 与 symlink 同样改为 `Walk` / `SymlinkNotAllowed`，`Zip(String)` 仅保留给 zip 库自身的写失败。`Error::Validation` 从枚举中移除 |
+| 测试缺口：`validate_mod_dir` 的 `About` 缺失路径没有 @variant 断言 | 新增 `rejects_a_stage_dir_without_an_about_xml` |
+
+- 文档：本文件 §3 与 `2026-11-06-review.md` N-011 中「`Error::Message` 暂缓」的记录已标注解决。
+- 验证：`cargo fmt/clippy/test/doc` 全部通过（78 tests + 3 doctests）。
+- 定版：master 当前状态即为 0.1.0-beta.1 最终代码；`release/0.1.0-beta.1` 分支快进至此。
