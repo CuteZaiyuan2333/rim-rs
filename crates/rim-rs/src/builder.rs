@@ -101,7 +101,10 @@ impl BuildOptions {
 /// Result of a successful build.
 #[derive(Debug, Clone)]
 pub struct BuildReport {
-    pub mod_dir: PathBuf,
+    /// Staging directory, present only when `keep_staging` is enabled.
+    pub mod_dir: Option<PathBuf>,
+    /// Directory the finished mod was copied to, present only when `deploy` is enabled.
+    pub deployed_dir: Option<PathBuf>,
     pub zip_path: Option<PathBuf>,
     pub dll_path: Option<PathBuf>,
     pub warnings: Vec<String>,
@@ -175,11 +178,10 @@ impl ModBuilder {
         self
     }
 
-    pub fn supported_version(mut self, version: impl Into<String>) -> Self {
-        self.supported_versions.push(version.into());
-        self
-    }
-
+    /// Sets the supported RimWorld versions, replacing the default `["1.6"]`.
+    ///
+    /// `rim-rs` only supports RimWorld 1.6; any entry other than exactly `1.6`
+    /// is rejected by [`ModBuilder::build`].
     pub fn supported_versions<I, S>(mut self, versions: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -298,26 +300,32 @@ impl ModBuilder {
             None
         };
 
-        if self.options.deploy {
+        let deployed_dir = if self.options.deploy {
             let mods_dir = match &self.options.mods_dir {
                 Some(directory) => directory.clone(),
                 None => GameInstall::locate(self.game_dir.as_deref())?.mods_dir(),
             };
-            package::copy_dir_all(&mod_dir, &mods_dir.join(&mod_folder))?;
-        }
+            let destination = mods_dir.join(&mod_folder);
+            package::copy_dir_all(&mod_dir, &destination)?;
+            Some(destination)
+        } else {
+            None
+        };
 
-        let report = BuildReport {
-            mod_dir: mod_dir.clone(),
+        let staged_dir = if self.options.keep_staging {
+            Some(mod_dir)
+        } else {
+            fs::remove_dir_all(&mod_dir).map_err(|error| Error::io(&mod_dir, error))?;
+            None
+        };
+
+        Ok(BuildReport {
+            mod_dir: staged_dir,
+            deployed_dir,
             zip_path,
             dll_path,
             warnings: Vec::new(),
-        };
-
-        if !self.options.keep_staging {
-            fs::remove_dir_all(&mod_dir).map_err(|error| Error::io(&mod_dir, error))?;
-        }
-
-        Ok(report)
+        })
     }
 
     fn build_csharp(&self, csharp: &CSharpSet, staging: &mut Staging) -> Result<PathBuf> {
@@ -499,10 +507,89 @@ mod tests {
             .build()
             .unwrap();
 
-        assert!(report.mod_dir.join("About/About.xml").is_file());
-        assert!(report.mod_dir.join("Defs/Generated.xml").is_file());
+        assert!(
+            report
+                .mod_dir
+                .as_ref()
+                .expect("staging is kept by default")
+                .join("About/About.xml")
+                .is_file()
+        );
+        assert!(
+            report
+                .mod_dir
+                .as_ref()
+                .unwrap()
+                .join("Defs/Generated.xml")
+                .is_file()
+        );
+        assert!(report.deployed_dir.is_none());
         assert!(report.zip_path.as_ref().unwrap().is_file());
         assert!(report.dll_path.is_none());
+    }
+
+    #[test]
+    fn drops_staging_path_when_staging_is_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let stage = dir.path().join(".rim-rs/stage/Test Mod");
+
+        let report = ModBuilder::builder("Test Mod")
+            .package_id("me.testmod")
+            .options(
+                BuildOptions::default()
+                    .base_dir(dir.path())
+                    .zip(false)
+                    .keep_staging(false),
+            )
+            .build()
+            .unwrap();
+
+        assert!(report.mod_dir.is_none());
+        assert!(!stage.exists());
+    }
+
+    #[test]
+    fn rejects_versions_other_than_16() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = ModBuilder::builder("Test Mod")
+            .package_id("me.testmod")
+            .supported_versions(["1.7"])
+            .options(BuildOptions::default().base_dir(dir.path()).zip(false))
+            .build()
+            .unwrap_err();
+
+        assert!(
+            matches!(error, Error::UnsupportedVersion(ref version) if version == "1.7"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn rejects_an_empty_supported_version_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = ModBuilder::builder("Test Mod")
+            .package_id("me.testmod")
+            .supported_versions(Vec::<String>::new())
+            .options(BuildOptions::default().base_dir(dir.path()).zip(false))
+            .build()
+            .unwrap_err();
+
+        assert!(matches!(error, Error::NoSupportedVersions), "{error}");
+    }
+
+    #[test]
+    fn supported_versions_replaces_the_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let report = ModBuilder::builder("Test Mod")
+            .package_id("me.testmod")
+            .supported_versions(["1.6"])
+            .options(BuildOptions::default().base_dir(dir.path()).zip(false))
+            .build()
+            .unwrap();
+
+        let about =
+            fs::read_to_string(report.mod_dir.as_ref().unwrap().join("About/About.xml")).unwrap();
+        assert_eq!(about.matches("<li>1.6</li>").count(), 1, "{about}");
     }
 
     #[test]
@@ -525,10 +612,11 @@ mod tests {
             .unwrap();
 
         let deployed = mods_dir.join("Test Mod");
+        assert_eq!(report.deployed_dir.as_deref(), Some(deployed.as_path()));
         assert!(deployed.join("About/About.xml").is_file());
         assert_eq!(
             fs::read(deployed.join("Defs/Generated.xml")).unwrap(),
-            fs::read(report.mod_dir.join("Defs/Generated.xml")).unwrap()
+            fs::read(report.mod_dir.as_ref().unwrap().join("Defs/Generated.xml")).unwrap()
         );
     }
 }

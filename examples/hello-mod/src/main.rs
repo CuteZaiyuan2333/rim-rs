@@ -111,7 +111,13 @@ fn main() -> Result<()> {
         .options(BuildOptions::default().base_dir(&root))
         .build()?;
 
-    println!("mod dir: {}", report.mod_dir.display());
+    match &report.mod_dir {
+        Some(dir) => println!("mod dir: {}", dir.display()),
+        None => println!("mod dir: (staging removed)"),
+    }
+    if let Some(dir) = &report.deployed_dir {
+        println!("deployed:{}", dir.display());
+    }
     if let Some(dll) = &report.dll_path {
         println!("dll:     {}", dll.display());
     }

@@ -39,6 +39,12 @@ pub enum Error {
     #[error("asset source does not exist: {0}")]
     AssetSourceMissing(PathBuf),
 
+    #[error("asset file mapping source is not a file: {0} (use map_dir for directories)")]
+    AssetFileExpected(PathBuf),
+
+    #[error("asset directory mapping source is not a directory: {0} (use map_file for files)")]
+    AssetDirExpected(PathBuf),
+
     #[error("invalid relative output path: {0}")]
     InvalidOutputPath(String),
 

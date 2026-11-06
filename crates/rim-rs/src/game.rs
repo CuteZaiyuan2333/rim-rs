@@ -82,14 +82,27 @@ impl GameInstall {
     }
 
     /// Fails when `Version.txt` exists and does not report a 1.6 build.
+    ///
+    /// Missing `Version.txt` is treated as unknown and allowed, so portable
+    /// installs without the file still work. Unparseable versions are rejected.
     pub fn require_16(&self) -> Result<()> {
         match &self.version {
-            Some(version) if !version.starts_with("1.6") => {
+            Some(version) if !is_rimworld_16(version) => {
                 Err(Error::UnsupportedVersion(version.clone()))
             }
             _ => Ok(()),
         }
     }
+}
+
+fn is_rimworld_16(version: &str) -> bool {
+    let Some(core) = version.split_whitespace().next() else {
+        return false;
+    };
+    let mut parts = core.split('.');
+    let major = parts.next().and_then(|part| part.parse::<u32>().ok());
+    let minor = parts.next().and_then(|part| part.parse::<u32>().ok());
+    matches!((major, minor), (Some(1), Some(6)))
 }
 
 fn looks_like_rimworld(path: &Path) -> bool {
@@ -126,30 +139,29 @@ fn candidates() -> Vec<PathBuf> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn rejects_a_non_16_version_file() {
+    fn fake_install(version: Option<&str>, harmony: bool) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         let managed = dir.path().join("RimWorldWin64_Data/Managed");
         std::fs::create_dir_all(&managed).unwrap();
         std::fs::write(managed.join("Assembly-CSharp.dll"), b"").unwrap();
-        std::fs::write(dir.path().join("Version.txt"), "1.5.4104 rev435").unwrap();
-
-        let install = GameInstall::from_root(dir.path()).unwrap();
-        assert!(matches!(
-            install.require_16(),
-            Err(Error::UnsupportedVersion(version)) if version.starts_with("1.5")
-        ));
+        if harmony {
+            std::fs::write(managed.join("0Harmony.dll"), b"").unwrap();
+        }
+        if let Some(version) = version {
+            std::fs::write(dir.path().join("Version.txt"), version).unwrap();
+        }
+        dir
     }
 
     #[test]
-    fn detects_the_local_gog_install() {
-        let path = PathBuf::from("/home/miquella/Games/RimWorld");
-        if !path.is_dir() {
-            return;
-        }
+    fn detects_a_fake_install() {
+        let dir = fake_install(Some("1.6.4871 rev573"), true);
 
-        let install = GameInstall::from_root(&path).unwrap();
-        assert!(install.managed.join("Assembly-CSharp.dll").is_file());
+        let install = GameInstall::from_root(dir.path()).unwrap();
+        assert_eq!(
+            install.managed,
+            dir.path().join("RimWorldWin64_Data/Managed")
+        );
         assert!(
             install
                 .references
@@ -158,10 +170,66 @@ mod tests {
         );
         assert!(
             install
-                .version
-                .as_deref()
-                .is_some_and(|v| v.starts_with("1.6"))
+                .references
+                .iter()
+                .any(|path| path.ends_with("0Harmony.dll"))
         );
+        assert_eq!(install.version.as_deref(), Some("1.6.4871 rev573"));
+        assert!(install.require_16().is_ok());
+    }
+
+    #[test]
+    fn allows_a_missing_version_file() {
+        let dir = fake_install(None, false);
+
+        let install = GameInstall::from_root(dir.path()).unwrap();
+        assert!(install.version.is_none());
+        assert!(install.require_16().is_ok());
+    }
+
+    #[test]
+    fn parses_the_major_and_minor_version() {
+        assert!(is_rimworld_16("1.6.4871 rev573"));
+        assert!(is_rimworld_16("1.6"));
+        assert!(is_rimworld_16("1.6.0.0"));
+
+        assert!(!is_rimworld_16("1.5.4104 rev435"));
+        assert!(!is_rimworld_16("1.60.4871"));
+        assert!(!is_rimworld_16("1.6x"));
+        assert!(!is_rimworld_16("2.6.1"));
+        assert!(!is_rimworld_16(""));
+        assert!(!is_rimworld_16("unknown"));
+    }
+
+    #[test]
+    fn rejects_a_non_16_version_file() {
+        for version in ["1.5.4104 rev435", "1.60.4871", "1.6x"] {
+            let dir = fake_install(Some(version), false);
+            let install = GameInstall::from_root(dir.path()).unwrap();
+            assert!(
+                matches!(
+                    install.require_16(),
+                    Err(Error::UnsupportedVersion(reported)) if reported == version
+                ),
+                "{version}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "requires a local RimWorld 1.6 install; set RIMWORLD_DIR and run with --ignored"]
+    fn detects_an_env_install() {
+        let root = env::var_os("RIMWORLD_DIR").expect("set RIMWORLD_DIR to a RimWorld 1.6 install");
+        let install = GameInstall::from_root(root).unwrap();
+
+        assert!(install.managed.join("Assembly-CSharp.dll").is_file());
+        assert!(
+            install
+                .references
+                .iter()
+                .any(|path| path.ends_with("Assembly-CSharp.dll"))
+        );
+        assert!(install.version.is_some(), "missing Version.txt");
         assert!(install.require_16().is_ok());
     }
 }

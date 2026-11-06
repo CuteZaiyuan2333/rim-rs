@@ -13,12 +13,14 @@
 
 | 类别 | 数量 | 说明 |
 |---|---:|---|
-| 仍存在，需改代码 | 6 | R-001、R-003、R-004、R-005、R-008、R-010 |
+| 仍存在，需改代码 | 1 | R-004 |
 | 仍存在，需补工程配套 | 2 | R-006、R-011 |
 | 文档问题，已在本轮修正 | 2 | R-002（状态描述）、R-009 |
-| 已修复 | 2 | R-007（C# API 简化时一并修复）、R-012（LICENSE） |
+| 已修复 | 6 | R-001、R-003、R-005、R-007、R-008、R-010；另 R-012（LICENSE）已解决 |
 
-> 2026-11-06 更新：C# 语法生成已移除，改为直接接收源码字符串；外部 C# builder 负责返回最终代码。R-007 随之修复。
+> 2026-11-06 更新：批次 1（API 语义）完成。C# 语法生成已移除，改为直接接收源码字符串；外部 C# builder 负责返回最终代码。
+
+批次 1 已通过 fmt、clippy、test、doc 与 RimWorld `-quicktest` 验证。
 
 几个值得保留的优点：
 
@@ -46,7 +48,9 @@
 
 ### R-001 `keep_staging(false)` 后报告路径失效
 
-状态：**仍存在。**
+状态：**已修复（2026-11-06）。**
+
+修复：`BuildReport.mod_dir` 改为 `Option<PathBuf>`，新增 `deployed_dir: Option<PathBuf>`。测试 `drops_staging_path_when_staging_is_disabled`、`deploys_to_an_explicit_mods_dir` 覆盖。
 
 `BuildReport` 在删除 staging 之前构造；`keep_staging(false)` 删除目录后，`report.mod_dir` 仍指向已不存在的路径。
 
@@ -81,7 +85,11 @@
 
 ### R-003 游戏探测测试依赖本机路径
 
-状态：**部分修复。**
+状态：**已修复（2026-11-06）。**
+
+修复：`detects_a_fake_install` 使用 `tempfile` 假安装覆盖 `managed` / `references` / `version`；真实安装测试改为 `#[ignore]`，通过 `RIMWORLD_DIR` + `--ignored` 显式运行。
+
+（修复前状态：部分修复。）
 
 已有 `rejects_a_non_16_version_file` 使用 `tempfile` 构造假安装，但 `detects_the_local_gog_install` 仍硬编码 `/home/miquella/Games/RimWorld`，路径不存在时直接返回。
 
@@ -115,7 +123,11 @@
 
 ### R-005 文件映射到目录的语义不直观
 
-状态：**仍存在。**
+状态：**已修复（2026-11-06）。**
+
+修复：`map` 拆分为 `map_file`（完整文件路径）与 `map_dir`（目录）；`textures` / `sounds` / `languages` 只接受目录，传入文件返回 `AssetDirExpected`；`map_file` 传入目录返回 `AssetFileExpected`。
+
+（修复前状态：仍存在。）
 
 `assets.map(file, "Textures")` 会生成名为 `Textures` 的文件，而不是 `Textures/<file>`；`assets.textures("one.png")` 同样有问题。
 
@@ -172,7 +184,11 @@
 
 ### R-008 `supported_version()` 的追加语义
 
-状态：**仍存在。**
+状态：**已修复（2026-11-06）。**
+
+修复：删除 `supported_version()`；`supported_versions(...)` 为替换语义；`build()` 拒绝空列表与非 `1.6` 版本。测试 `rejects_versions_other_than_16`、`rejects_an_empty_supported_version_list`、`supported_versions_replaces_the_default`。
+
+（修复前状态：仍存在。）
 
 默认已有 `1.6`，`supported_version()` 采用追加；追加其他版本必然触发版本错误，追加 `1.6` 又会产生重复项。
 
@@ -201,7 +217,11 @@
 
 ### R-010 `require_16()` 的前缀判断偏宽
 
-状态：**仍存在。**
+状态：**已修复（2026-11-06）。**
+
+修复：`is_rimworld_16` 解析第一个空白分隔 token，按 `.` 取主/次版本，要求精确为 `1.6`。`1.60.x`、`1.6x` 被拒绝；无 `Version.txt` 时保持宽松（文档约定）。
+
+（修复前状态：仍存在。）
 
 `starts_with("1.6")` 会接受 `1.60`、`1.6x`。
 
@@ -247,12 +267,12 @@
 
 目标：先消除会让调用方“按直觉使用却得到错误结果”的问题。
 
-- [ ] R-001：`BuildReport.mod_dir` 改为 `Option`，增加 `deployed_dir`。
-- [ ] R-003：用假安装 fixture 覆盖探测逻辑，真实安装测试转为 opt-in。
-- [ ] R-005：拆分 `map_file` / `map_dir`，目录型 helper 拒绝文件输入。
+- [x] R-001：`BuildReport.mod_dir` 改为 `Option`，增加 `deployed_dir`。
+- [x] R-003：用假安装 fixture 覆盖探测逻辑，真实安装测试转为 opt-in。
+- [x] R-005：拆分 `map_file` / `map_dir`，目录型 helper 拒绝文件输入。
 - [x] R-007：引用但无源码时返回明确错误（随 C# API 简化完成）。
-- [ ] R-008：移除 `supported_version()`，集合 API 设为替换语义并校验只含 `1.6`。
-- [ ] R-010：按主次版本号校验 `Version.txt`。
+- [x] R-008：移除 `supported_version()`，集合 API 设为替换语义并校验只含 `1.6`。
+- [x] R-010：按主次版本号校验 `Version.txt`。
 
 完成标准：
 

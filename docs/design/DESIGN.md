@@ -248,14 +248,15 @@ public static class MyModMod
 
 ```rust
 .assets(|assets| {
-    // 目录内容原样映射，保留相对路径
+    // 目录内容原样映射，保留相对路径（只接受目录）
     assets.textures("assets/textures");   // assets/textures/Things/Foo.png -> Textures/Things/Foo.png
     assets.sounds("assets/sounds");       // -> Sounds/
     assets.languages("assets/languages"); // -> Languages/
-    assets.preview("assets/preview.png"); // -> About/Preview.png
+    assets.preview("assets/preview.png"); // -> About/Preview.png（只接受文件）
 
-    // 任意映射
-    assets.map("assets/misc", "Misc");
+    // 任意映射：文件必须指定完整目标文件路径，目录映射到目标目录
+    assets.map_file("assets/misc/note.txt", "Misc/note.txt");
+    assets.map_dir("assets/misc", "Misc");
 })
 ```
 
@@ -337,7 +338,10 @@ pub struct ModBuilder {
 }
 
 pub struct BuildReport {
-    pub mod_dir: PathBuf,
+    /// `Some` only when `keep_staging(true)` (the default).
+    pub mod_dir: Option<PathBuf>,
+    /// `Some` only when deployment ran.
+    pub deployed_dir: Option<PathBuf>,
     pub zip_path: Option<PathBuf>,
     pub dll_path: Option<PathBuf>,
     pub warnings: Vec<String>,
@@ -411,7 +415,7 @@ struct SourceFile {
 
 ```text
 ModBuilder::build()
-  1. 校验 metadata（packageId、name、supportedVersions）
+  1. 校验 metadata（packageId、name、supportedVersions：必须非空且只能是 `1.6`；`supported_versions(...)` 为替换语义）
   2. 准备 .rim-rs/stage/<ModName>/
   3. 写 About/About.xml
   4. 写 Defs/*.xml
