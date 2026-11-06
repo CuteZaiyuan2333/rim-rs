@@ -312,7 +312,7 @@ rim-rs/
         assets.rs
         game.rs              # 1.6 游戏目录/程序集探测
         project.rs           # 生成 .csproj
-        dotnet.rs            # restore/build 调用
+        dotnet.rs            # restore/build 调用（CommandRunner 可注入）
         package.rs           # staging + zip + 校验
         builder.rs           # Mod::builder / build()
   examples/
@@ -569,12 +569,14 @@ dotnet build   .rim-rs/work/Mod.csproj --no-restore -c Release -o .rim-rs/out
 - [x] 生成 `.csproj`
 - [x] `dotnet restore/build`
 - [x] DLL 复制到 `Assemblies/`
-- [ ] 编译错误解析（当前仅附带完整 stdout/stderr，未提取诊断）
+- [x] 编译错误诊断摘要：优先提取 `error CSxxxx` / `error MSBxxxx` 行，无诊断时回退完整输出；原始 stdout/stderr 始终保留
+- [x] zip 条目按路径排序、时间戳固定（1980-01-01），相同输入产生相同 zip
 - 外部 C# builder 提供：`Mod` 入口类 / `DefOf` / Harmony Patch 高层 helper
 
 ### 6.3 后续
 
 - [x] `RecipeDef` typed builder
+- [x] CI（fmt / clippy / test / doc，见 `.github/workflows/ci.yml`）
 - [ ] `HediffDef`、`ResearchProjectDef` 等 typed builder
 - [ ] `rim-rs new` 项目模板
 - [x] 部署到 `Mods/`
@@ -600,9 +602,9 @@ dotnet build   .rim-rs/work/Mod.csproj --no-restore -c Release -o .rim-rs/out
 | XML | 转义（`<`, `&`, `'`, `"`）、属性顺序、注释、CDATA、空元素 |
 | Def | `ThingDef` 字段输出、raw 片段、组合 |
 | 校验 | `packageId` 合法/非法、大小写冲突、禁止文件 |
-| 打包 | staging 结构、zip 内容、幂等性 |
+| 打包 | staging 结构、zip 内容、幂等性、zip 条目顺序与字节一致性 |
 | C# | 源码原样写入、文件名与路径校验、引用无源码报错 |
-| dotnet | 用 fake `CommandRunner` 测参数和错误解析；真实编译作为可选集成测试 |
+| dotnet | 用 fake `CommandRunner` 测参数、诊断摘要与无诊断回退；真实编译作为可选集成测试 |
 
 所有文件系统测试用 `tempfile`，不污染工作目录。
 

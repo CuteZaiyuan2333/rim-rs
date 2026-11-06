@@ -13,12 +13,12 @@
 
 | 类别 | 数量 | 说明 |
 |---|---:|---|
-| 仍存在，需改代码 | 1 | R-004 |
-| 仍存在，需补工程配套 | 2 | R-006、R-011 |
-| 文档问题，已在本轮修正 | 2 | R-002（状态描述）、R-009 |
-| 已修复 | 6 | R-001、R-003、R-005、R-007、R-008、R-010；另 R-012（LICENSE）已解决 |
+| 仍存在，需改代码 | 0 | — |
+| 仍存在，需补工程配套 | 0 | — |
+| 文档问题，已在本轮修正 | 1 | R-009 |
+| 已修复 | 11 | R-001 至 R-008、R-010 至 R-012（R-009 为文档修正） |
 
-> 2026-11-06 更新：批次 1（API 语义）完成。C# 语法生成已移除，改为直接接收源码字符串；外部 C# builder 负责返回最终代码。
+> 2026-11-06 更新：批次 1（API 语义）与批次 2（R-002/R-004/R-006/R-011）完成。C# 语法生成已移除，改为直接接收源码字符串；外部 C# builder 负责返回最终代码。
 
 批次 1 已通过 fmt、clippy、test、doc 与 RimWorld `-quicktest` 验证。
 
@@ -68,20 +68,11 @@
 
 ### R-002 C# 编译错误解析与文档不符
 
-状态：**文档已修正，代码能力仍缺失。**
+状态：**已修复（2026-11-06）。**
 
-本轮已将 `DESIGN.md` 中的“编译错误解析”改为未完成，并注明当前只附带完整 stdout/stderr。
+修复：`dotnet` 失败时优先提取唯一 `error CSxxxx` / `error MSBxxxx` 诊断行（保留文件与行列文本）；无诊断行时回退完整输出。原始 stdout/stderr 始终附带在错误文本中。
 
-整改方案（放第二批）：
-
-- 从 `dotnet` 输出中提取 `error CSxxxx` / `error MSBxxxx` 行。
-- 保留原始输出作为详细上下文，但错误摘要优先展示诊断行。
-- 若生成的 `.cs` 能映射到文件名，则至少保留文件与行号文本，不要求结构化 AST。
-
-验收：
-
-- 用 fake runner 构造含 CS 错误的输出，断言错误消息包含诊断行。
-- 无诊断行时回退到完整输出，不丢失信息。
+验收达成：fake runner 测试覆盖含诊断、无诊断两条路径。
 
 ### R-003 游戏探测测试依赖本机路径
 
@@ -106,20 +97,11 @@
 
 ### R-004 `dotnet` 层缺少测试
 
-状态：**仍存在。**
+状态：**已修复（2026-11-06）。**
 
-`DotnetRunner` 直接调用 `std::process::Command`，无法注入 fake。
+修复：引入 `CommandRunner` trait 与默认 `SystemRunner`；`DotnetRunner::new(program)` 的公开入口不变，`DotnetRunner::with_runner(program, runner)` 供测试注入。fake runner 测试断言 restore/build 参数（包含 `--no-restore`、`-c`、`-o`、`--nologo`、`-p:ContinuousIntegrationBuild=true`）与工作目录。
 
-整改方案：
-
-- 引入 `CommandRunner` trait（或函数式注入）：默认实现执行外部命令，测试实现记录参数并返回预设输出。
-- 为 `restore` / `build` 的参数、工作目录、失败输出拼接分别补测试。
-- 保持 `DotnetRunner::new(program)` 的默认入口不变。
-
-验收：
-
-- 断言 build 参数包含 `--no-restore`、`-c`、`-o` 等关键项。
-- 失败时错误文本包含退出状态、stdout、stderr。
+验收达成：失败输出包含退出状态、stdout、stderr。
 
 ### R-005 文件映射到目录的语义不直观
 
@@ -148,21 +130,17 @@
 
 ### R-006 构建产物不可复现
 
-状态：**仍存在。**
+状态：**已修复（2026-11-06）。**
 
-`WalkDir` 顺序依赖文件系统，zip 条目时间戳未固定。
+修复：
 
-整改方案：
+- zip 条目收集后按路径排序写入；时间戳固定为 `DateTime::DEFAULT`（1980-01-01，`time` feature 未启用）。
+- `AssetSet::collect()` 输出按目标路径排序。
+- `CSharpSet::compile_files()` 按 canonical 路径排序，`.csproj` 的 `<Compile>` 顺序与文件系统遍历无关。
 
-- 所有输出路径在写入前收集并排序：资产、C# 生成文件、zip 条目。
-- zip 使用固定时间戳（例如 1980-01-01）和固定条目顺序。
-- 保持 `Deterministic=true`、`ContinuousIntegrationBuild=true`。
-- 增加“同一输入连续构建两次，zip 内容与条目顺序一致”的测试。
+验收达成：`zips_identical_input_to_identical_bytes` 用相反创建顺序构造相同目录树，两次 zip 字节一致；`zips_entries_in_sorted_order` 校验条目顺序。
 
-验收：
-
-- 两次构建的 zip 文件哈希一致（至少在本机同一路径下）。
-- zip 条目顺序稳定，不随文件系统遍历顺序变化。
+> 注意：排序与固定时间戳会改变此前产物的哈希，属预期。
 
 ### R-007 只添加引用时 C# 构建被跳过
 
@@ -239,21 +217,11 @@
 
 ### R-011 缺少 CI
 
-状态：**仍存在。**
+状态：**已修复（2026-11-06）。**
 
-整改方案：
+修复：新增 `.github/workflows/ci.yml`，push / PR 上运行 fmt、clippy、test、doc；不依赖 RimWorld 或 .NET SDK。
 
-- 新增 `.github/workflows/ci.yml`，在 push / PR 上运行：
-  - `cargo fmt --all --check`
-  - `cargo clippy --workspace --all-targets -- -D warnings`
-  - `cargo test --workspace`
-- 不依赖 RimWorld 或 .NET SDK；涉及真实编译和游戏的验证保持本地 opt-in。
-- 可加 `cargo doc` 的 `-D warnings` 检查，作为文档门禁。
-
-验收：
-
-- 新提交在无 RimWorld 的 runner 上通过。
-- 失败时能定位到 fmt、clippy、test 或 doc 中的具体步骤。
+验收达成：真实编译与 `-quicktest` 保持本地 opt-in。
 
 ### R-012 缺少 LICENSE
 
@@ -286,16 +254,16 @@
 
 目标：让外部命令、错误输出和构建产物可测试、可复现。
 
-- [ ] R-004：引入可注入的 `CommandRunner`，补 `dotnet` 参数与失败输出测试。
-- [ ] R-002：实现最小 `error CSxxxx` / `error MSBxxxx` 摘要；完成后重新勾选 DESIGN。
-- [ ] R-006：排序所有输出；固定 zip 时间戳；增加重复构建测试。
-- [ ] R-011：加入 CI，覆盖 fmt、clippy、test、doc。
+- [x] R-004：引入可注入的 `CommandRunner`，补 `dotnet` 参数与失败输出测试。
+- [x] R-002：实现最小 `error CSxxxx` / `error MSBxxxx` 摘要；完成后重新勾选 DESIGN。
+- [x] R-006：排序所有输出；固定 zip 时间戳；增加重复构建测试。
+- [x] R-011：加入 CI，覆盖 fmt、clippy、test、doc。
 
 完成标准：
 
 - CI 在无 RimWorld 环境通过。
-- fake runner 测试覆盖成功、失败、无诊断行三种路径。
-- 两次构建 zip 哈希一致。
+- fake runner 测试覆盖成功、失败、无诊断行三种路径（诊断摘要测试各一覆盖）。
+- 两次构建 zip 哈希一致（`zips_identical_input_to_identical_bytes`）。
 
 ### 批次 3：可用性与功能扩展（P2）
 

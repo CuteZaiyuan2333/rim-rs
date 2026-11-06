@@ -123,8 +123,16 @@ impl AssetSet {
             }
         }
 
+        sort_output(&mut output);
         Ok(output)
     }
+}
+
+/// Sorts mappings by destination so staging writes (and any collision errors)
+/// are independent of filesystem iteration order.
+fn sort_output(output: &mut Vec<(PathBuf, PathBuf)>) {
+    output.sort_by(|left, right| left.1.cmp(&right.1));
+    output.dedup_by(|left, right| left.1 == right.1);
 }
 
 #[cfg(test)]

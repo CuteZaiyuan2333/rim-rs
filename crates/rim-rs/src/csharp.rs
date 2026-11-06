@@ -125,6 +125,8 @@ impl CSharpSet {
             }
         }
 
+        // Keep the `.csproj` `<Compile>` list independent of filesystem order.
+        files.sort();
         Ok(files)
     }
 }

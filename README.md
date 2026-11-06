@@ -173,4 +173,11 @@ Mod::builder("My Mod")
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps
 ```
+
+补充验证：
+
+- `RIMWORLD_DIR=... cargo test -p rim-rs --lib detects_an_env -- --ignored`：真实游戏安装的探测测试（默认 `#[ignore]`）。
+- zip 打包确定性：条目按路径排序、时间戳固定为 1980-01-01，相同输入产出字节一致的 zip。
+- CI（`.github/workflows/ci.yml`）在 push / PR 上运行上述 fmt / clippy / test / doc 检查，不依赖 RimWorld 或 .NET SDK。

@@ -5,7 +5,7 @@ use std::path::{Component, Path, PathBuf};
 
 use walkdir::WalkDir;
 use zip::write::SimpleFileOptions;
-use zip::{CompressionMethod, ZipWriter};
+use zip::{CompressionMethod, DateTime, ZipWriter};
 
 use crate::error::{Error, Result};
 
@@ -147,6 +147,9 @@ pub fn validate_mod_dir(root: &Path) -> Result<()> {
 }
 
 /// Creates a zip archive from a directory.
+///
+/// Entries are written in sorted path order with a fixed timestamp
+/// (1980-01-01), so two builds of identical input produce identical bytes.
 pub fn zip_dir(source: &Path, destination: &Path) -> Result<()> {
     if let Some(parent) = destination.parent() {
         fs::create_dir_all(parent).map_err(|error| Error::io(parent, error))?;
@@ -154,8 +157,11 @@ pub fn zip_dir(source: &Path, destination: &Path) -> Result<()> {
 
     let file = File::create(destination).map_err(|error| Error::io(destination, error))?;
     let mut zip = ZipWriter::new(file);
-    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+    let options = SimpleFileOptions::default()
+        .compression_method(CompressionMethod::Deflated)
+        .last_modified_time(DateTime::DEFAULT);
 
+    let mut entries: Vec<(String, PathBuf)> = Vec::new();
     for entry in WalkDir::new(source).follow_links(false) {
         let entry = entry.map_err(|err| Error::Zip(err.to_string()))?;
         if entry.file_type().is_symlink() {
@@ -173,10 +179,14 @@ pub fn zip_dir(source: &Path, destination: &Path) -> Result<()> {
             .strip_prefix(source)
             .expect("walkdir entry is inside source");
         let name = relative.to_string_lossy().replace('\\', "/");
+        entries.push((name, entry.path().to_path_buf()));
+    }
+    entries.sort_by(|left, right| left.0.cmp(&right.0));
 
-        zip.start_file(name, options)
+    for (name, path) in &entries {
+        zip.start_file(name.as_str(), options)
             .map_err(|err| Error::Zip(err.to_string()))?;
-        let mut input = File::open(entry.path()).map_err(|err| Error::io(entry.path(), err))?;
+        let mut input = File::open(path).map_err(|err| Error::io(path, err))?;
         io::copy(&mut input, &mut zip).map_err(|err| Error::Zip(err.to_string()))?;
     }
 
@@ -257,5 +267,63 @@ mod tests {
         zip_dir(&source, &zip_path).unwrap();
         assert!(zip_path.is_file());
         assert!(fs::metadata(&zip_path).unwrap().len() > 0);
+    }
+
+    #[test]
+    fn zips_identical_input_to_identical_bytes() {
+        let build_tree = |root: &Path, reversed: bool| {
+            let names = [
+                "Defs/A.xml",
+                "Defs/B.xml",
+                "About/About.xml",
+                "Textures/x.png",
+            ];
+            let names: Vec<_> = if reversed {
+                names.iter().rev().collect()
+            } else {
+                names.iter().collect()
+            };
+            for name in names {
+                let path = root.join(name);
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                fs::write(path, format!("content of {name}")).unwrap();
+            }
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("first");
+        let second = dir.path().join("second");
+        build_tree(&first, false);
+        build_tree(&second, true);
+
+        let first_zip = dir.path().join("first.zip");
+        let second_zip = dir.path().join("second.zip");
+        zip_dir(&first, &first_zip).unwrap();
+        zip_dir(&second, &second_zip).unwrap();
+
+        assert_eq!(
+            fs::read(&first_zip).unwrap(),
+            fs::read(&second_zip).unwrap()
+        );
+    }
+
+    #[test]
+    fn zips_entries_in_sorted_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("mod");
+        fs::create_dir_all(&source).unwrap();
+        for name in ["z.txt", "a.txt", "m.txt"] {
+            fs::write(source.join(name), b"x").unwrap();
+        }
+
+        let zip_path = dir.path().join("mod.zip");
+        zip_dir(&source, &zip_path).unwrap();
+
+        let file = File::open(&zip_path).unwrap();
+        let mut archive = zip::ZipArchive::new(file).unwrap();
+        let names: Vec<String> = (0..archive.len())
+            .map(|index| archive.by_index(index).unwrap().name().unwrap().to_string())
+            .collect();
+        assert_eq!(names, ["a.txt", "m.txt", "z.txt"]);
     }
 }
