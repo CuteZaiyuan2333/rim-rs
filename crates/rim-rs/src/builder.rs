@@ -20,6 +20,12 @@ pub struct BuildOptions {
     /// Write `dist/<ModName>.zip`.
     pub zip: bool,
     /// Copy the finished mod into `<game>/Mods/<ModName>`.
+    ///
+    /// The destination directory is replaced wholesale. Before the replace, an
+    /// existing `About.xml` there is checked: it must identify the same mod
+    /// (via `packageId`, falling back to a case-insensitive `name`
+    /// comparison), or the build is refused instead of silently deleting
+    /// another mod.
     pub deploy: bool,
     /// Keep `.rim-rs/stage/<ModName>` after a successful build.
     pub keep_staging: bool,
@@ -323,19 +329,64 @@ impl ModBuilder {
     }
 
     /// Builds the mod.
+    ///
+    /// On failure, the staging directory created for this build is removed so
+    /// that no partial (unusable) mod directory is left behind
+    /// (`Error::ModDirOccupied` is raised before anything is deleted when an
+    /// overwrite target belongs to a different mod).
     pub fn build(self) -> Result<BuildReport> {
         self.validate()?;
 
         let mod_folder = project::sanitize_dir_name(&self.name);
-        let stage_root = self.options.work_dir.join("stage");
-        let mod_dir = stage_root.join(&mod_folder);
+        let mod_dir = self.options.work_dir.join("stage").join(&mod_folder);
+        let package_id = self.package_id.as_deref().expect("validated package_id");
 
         if mod_dir.exists() {
+            // `remove_dir_all` is a wholesale replace; refuse when a different
+            // mod owns the directory (e.g. a case-variant name on a
+            // case-insensitive filesystem).
+            package::ensure_can_replace(&mod_dir, &self.name, package_id)?;
             fs::remove_dir_all(&mod_dir).map_err(|error| Error::io(&mod_dir, error))?;
         }
         fs::create_dir_all(&mod_dir).map_err(|error| Error::io(&mod_dir, error))?;
 
         let mut staging = Staging::new(&mod_dir)?;
+
+        match self.assemble(&mut staging, &mod_folder) {
+            Ok((zip_path, deployed_dir, dll_path)) => {
+                let staged_dir = if self.options.keep_staging {
+                    Some(mod_dir)
+                } else {
+                    fs::remove_dir_all(&mod_dir).map_err(|error| Error::io(&mod_dir, error))?;
+                    None
+                };
+
+                Ok(BuildReport {
+                    mod_dir: staged_dir,
+                    deployed_dir,
+                    zip_path,
+                    dll_path,
+                })
+            }
+            Err(error) => {
+                // A failed build never leaves a partial mod directory behind,
+                // which could be mistaken for a loadable mod. Intermediate
+                // directories (`csharp/`, `work/`, `out/`) are kept for
+                // debugging the failure.
+                let _ = fs::remove_dir_all(&mod_dir);
+                Err(error)
+            }
+        }
+    }
+
+    /// Stages every input and, unless `dry_run` is set, compiles C#, zips and
+    /// deploys. Returns `(zip_path, deployed_dir, dll_path)`.
+    fn assemble(
+        &self,
+        staging: &mut Staging,
+        mod_folder: &str,
+    ) -> Result<(Option<PathBuf>, Option<PathBuf>, Option<PathBuf>)> {
+        let package_id = self.package_id.as_deref().expect("validated package_id");
 
         // About.xml
         staging.write(
@@ -366,18 +417,18 @@ impl ModBuilder {
             // reaches the compile stage.
             None
         } else if self.csharp.has_sources() {
-            Some(self.build_csharp(&self.csharp, &mut staging, &mod_folder)?)
+            Some(self.build_csharp(&self.csharp, staging, mod_folder)?)
         } else {
             None
         };
 
-        package::validate_mod_dir(&mod_dir)?;
+        package::validate_mod_dir(staging.path())?;
 
         let zip_path = if self.options.zip && !self.options.dry_run {
             fs::create_dir_all(&self.options.dist_dir)
                 .map_err(|error| Error::io(&self.options.dist_dir, error))?;
             let zip_path = self.options.dist_dir.join(format!("{mod_folder}.zip"));
-            package::zip_dir(&mod_dir, &zip_path)?;
+            package::zip_dir(staging.path(), &zip_path)?;
             Some(zip_path)
         } else {
             None
@@ -388,26 +439,15 @@ impl ModBuilder {
                 Some(directory) => directory.clone(),
                 None => GameInstall::locate(self.game_dir.as_deref())?.mods_dir(),
             };
-            let destination = mods_dir.join(&mod_folder);
-            package::copy_dir_all(&mod_dir, &destination)?;
+            let destination = mods_dir.join(mod_folder);
+            package::ensure_can_replace(&destination, &self.name, package_id)?;
+            package::copy_dir_all(staging.path(), &destination)?;
             Some(destination)
         } else {
             None
         };
 
-        let staged_dir = if self.options.keep_staging {
-            Some(mod_dir)
-        } else {
-            fs::remove_dir_all(&mod_dir).map_err(|error| Error::io(&mod_dir, error))?;
-            None
-        };
-
-        Ok(BuildReport {
-            mod_dir: staged_dir,
-            deployed_dir,
-            zip_path,
-            dll_path,
-        })
+        Ok((zip_path, deployed_dir, dll_path))
     }
 
     fn build_csharp(
@@ -955,6 +995,111 @@ mod tests {
         assert!(
             matches!(error, Error::DotnetBuild(ref text) if text.contains("error CS0103")),
             "{error}"
+        );
+    }
+
+    /// 新-1: the staging directory of a same-named mod must not be silently
+    /// replaced when the existing `About.xml` belongs to another mod
+    /// (case-variant names land in the same directory on Windows/macOS).
+    #[test]
+    fn refuses_to_replace_a_stage_dir_of_a_different_mod() {
+        let dir = tempfile::tempdir().unwrap();
+        let stage = dir.path().join(".rim-rs/stage/Test Mod");
+        fs::create_dir_all(stage.join("About")).unwrap();
+        fs::write(
+            stage.join("About/About.xml"),
+            "<ModMetaData><name>Test Mod</name><packageId>me.othermod</packageId></ModMetaData>",
+        )
+        .unwrap();
+
+        let error = ModBuilder::builder("Test Mod")
+            .package_id("me.testmod")
+            .options(BuildOptions::default().base_dir(dir.path()).zip(false))
+            .build()
+            .unwrap_err();
+
+        assert!(matches!(error, Error::ModDirOccupied { .. }), "{error}");
+        // The foreign mod directory was left untouched.
+        assert!(
+            fs::read_to_string(stage.join("About/About.xml"))
+                .unwrap()
+                .contains("me.othermod")
+        );
+    }
+
+    /// 新-2: a failed build must not leave a partial staging directory behind
+    /// that could be mistaken for a loadable mod. Intermediates stay.
+    #[test]
+    fn removes_partial_staging_when_the_csharp_stage_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let libs = dir.path().join("libs");
+        fs::create_dir_all(&libs).unwrap();
+        let reference = libs.join("0Harmony.dll");
+        fs::write(&reference, b"harmony stub").unwrap();
+
+        let error = ModBuilder::builder("Test Mod")
+            .package_id("me.testmod")
+            .csharp("Mod.cs", "class Mod {}")
+            .csharp_reference(&reference)
+            .options(
+                BuildOptions::default()
+                    .base_dir(dir.path())
+                    .zip(false)
+                    .game_probe(false)
+                    .runner(Arc::new(FakeDotnet::failing())),
+            )
+            .build()
+            .unwrap_err();
+
+        assert!(matches!(error, Error::DotnetBuild(..)), "{error}");
+        assert!(
+            !dir.path().join(".rim-rs/stage/Test Mod").exists(),
+            "no partial staging may survive a failed build"
+        );
+        // Intermediates are kept for debugging.
+        assert!(dir.path().join(".rim-rs/csharp/Test Mod/Mod.cs").is_file());
+        assert!(
+            dir.path()
+                .join(".rim-rs/work/Test Mod/Mod.csproj")
+                .is_file()
+        );
+    }
+
+    /// 新-1: the same guard applies to the deploy destination, where only an
+    /// About.xml shows which mod owns a directory.
+    #[test]
+    fn refuses_to_deploy_over_a_foreign_mod_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let mods_dir = dir.path().join("Mods");
+        let deployed = mods_dir.join("Test Mod");
+        fs::create_dir_all(deployed.join("About")).unwrap();
+        fs::write(
+            deployed.join("About/About.xml"),
+            "<ModMetaData><name>Test Mod</name><packageId>me.othermod</packageId></ModMetaData>",
+        )
+        .unwrap();
+
+        let error = ModBuilder::builder("Test Mod")
+            .package_id("me.testmod")
+            .defs(|defs| {
+                defs.add(ThingDef::new("TestThing").label("test thing"));
+            })
+            .options(
+                BuildOptions::default()
+                    .base_dir(dir.path())
+                    .zip(false)
+                    .deploy(true)
+                    .mods_dir(&mods_dir),
+            )
+            .build()
+            .unwrap_err();
+
+        assert!(matches!(error, Error::ModDirOccupied { .. }), "{error}");
+        // One About.xml later, the other mod's file is still the one there.
+        assert!(
+            fs::read_to_string(deployed.join("About/About.xml"))
+                .unwrap()
+                .contains("me.othermod")
         );
     }
 

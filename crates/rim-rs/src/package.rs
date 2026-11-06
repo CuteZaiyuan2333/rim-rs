@@ -91,6 +91,75 @@ pub fn validate_relative(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Guards a wholesale replace of `root` with a newly built mod.
+///
+/// Overwrite boundaries (`stage/<Mod>/`, `<game>/Mods/<Mod>/`) are named after
+/// the mod. A rebuild of the same mod has an `About.xml` in there that reports
+/// the same `packageId`, so replacing is expected. Anything else — another mod
+/// behind a case-variant folder name on a case-insensitive filesystem, or an
+/// unrecognizable directory — is refused instead of silently deleted.
+///
+/// An existing directory without `About.xml` is treated as leftover scratch
+/// space and is allowed.
+pub fn ensure_can_replace(root: &Path, mod_name: &str, package_id: &str) -> Result<()> {
+    let about = root.join("About").join("About.xml");
+    let text = match fs::read_to_string(&about) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(Error::io(&about, err)),
+    };
+
+    let existing_package_id = extract_tag(&text, "packageId");
+    let existing_name = extract_tag(&text, "name");
+
+    let same_mod = match &existing_package_id {
+        Some(existing) => existing == package_id,
+        // No packageId (older About.xml layout): fall back to the name,
+        // compared case-insensitively because the guard exists for
+        // case-colliding folder names.
+        None => existing_name
+            .as_deref()
+            .is_some_and(|name| name.eq_ignore_ascii_case(mod_name)),
+    };
+
+    if same_mod {
+        return Ok(());
+    }
+
+    Err(Error::ModDirOccupied {
+        path: root.to_path_buf(),
+        detail: match (existing_package_id, existing_name) {
+            (Some(id), Some(name)) => format!("packageId `{id}`, name `{name}`"),
+            (Some(id), None) => format!("packageId `{id}`"),
+            (None, Some(name)) => format!("name `{name}`, no packageId"),
+            (None, None) => "unrecognizable About.xml".to_string(),
+        },
+    })
+}
+
+/// Extracts a child element's text from a serialized `About.xml` string.
+///
+/// Deliberately not a real XML parser: `About.xml` is flat and
+/// `<tag>value</tag>` is its entire shape. The value is XML-unescaped so
+/// hand-written files compare fairly.
+fn extract_tag(text: &str, tag: &str) -> Option<String> {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    let start = text.find(&open)? + open.len();
+    let end = start + text[start..].find(&close)?;
+    let value = xml_unescape(text[start..end].trim());
+    if value.is_empty() { None } else { Some(value) }
+}
+
+fn xml_unescape(value: &str) -> String {
+    value
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&")
+}
+
 /// Validates the final staging directory.
 pub fn validate_mod_dir(root: &Path) -> Result<()> {
     let about = root.join("About/About.xml");
@@ -237,6 +306,84 @@ pub fn copy_dir_all(source: &Path, destination: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replaces_a_directory_of_the_same_mod() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("Test Mod");
+        fs::create_dir_all(root.join("About")).unwrap();
+        fs::write(
+            root.join("About/About.xml"),
+            "<ModMetaData><name>Test Mod</name><packageId>me.testmod</packageId></ModMetaData>",
+        )
+        .unwrap();
+
+        assert!(ensure_can_replace(&root, "Test Mod", "me.testmod").is_ok());
+    }
+
+    #[test]
+    fn rejects_a_directory_used_by_a_different_mod() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("test mod");
+        fs::create_dir_all(root.join("About")).unwrap();
+        fs::write(
+            root.join("About/About.xml"),
+            "<ModMetaData><name>test mod</name><packageId>me.othermod</packageId></ModMetaData>",
+        )
+        .unwrap();
+
+        let error = ensure_can_replace(&root, "Test Mod", "me.testmod").unwrap_err();
+        assert!(
+            matches!(error, Error::ModDirOccupied{ref detail, ..} if detail.contains("me.othermod")),
+            "{error}"
+        );
+        // The directory was not touched.
+        assert!(root.join("About/About.xml").is_file());
+    }
+
+    #[test]
+    fn compares_the_name_when_no_package_id_is_present() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("mod");
+        fs::create_dir_all(root.join("About")).unwrap();
+        fs::write(
+            root.join("About/About.xml"),
+            "<ModMetaData><name>Test &amp; Mod</name></ModMetaData>",
+        )
+        .unwrap();
+
+        // Same mod (name matches, entity escaped in the file).
+        assert!(ensure_can_replace(&root, "Test & Mod", "me.testmod").is_ok());
+
+        fs::write(
+            root.join("About/About.xml"),
+            "<ModMetaData><name>Other Mod</name></ModMetaData>",
+        )
+        .unwrap();
+        assert!(ensure_can_replace(&root, "Test Mod", "me.testmod").is_err());
+    }
+
+    #[test]
+    fn allows_a_directory_without_an_about_xml() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("mod");
+        fs::create_dir_all(root.join("About")).unwrap();
+        assert!(ensure_can_replace(&root, "Test Mod", "me.testmod").is_ok());
+    }
+
+    #[test]
+    fn rejects_an_unrecognizable_about_xml() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("mod");
+        fs::create_dir_all(root.join("About")).unwrap();
+        fs::write(root.join("About/About.xml"), "not xml at all").unwrap();
+
+        let error = ensure_can_replace(&root, "Test Mod", "me.testmod").unwrap_err();
+        assert!(
+            matches!(error, Error::ModDirOccupied{ref detail, ..} if detail.contains("unrecognizable")),
+            "{error}"
+        );
+    }
 
     #[test]
     fn rejects_path_traversal() {

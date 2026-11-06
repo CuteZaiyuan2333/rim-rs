@@ -71,6 +71,12 @@ pub enum Error {
     #[error("forbidden file in packaged mod: {0}")]
     ForbiddenFile(String),
 
+    #[error(
+        "refusing to replace `{path}`: it already contains a different mod ({detail}); \
+         pick a different mod name or remove the other mod first"
+    )]
+    ModDirOccupied { path: PathBuf, detail: String },
+
     #[error("io error at {path}: {source}")]
     Io {
         path: PathBuf,

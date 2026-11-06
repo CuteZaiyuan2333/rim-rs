@@ -53,6 +53,7 @@ fn main() -> Result<()> {
 - [设计文档](docs/design/DESIGN.md)
 - [调研记录](docs/design/RESEARCH.md)
 - [代码审查](docs/review/2026-11-06-review.md)
+- [0.1.0-beta.1 收尾记录](docs/review/2026-11-07-release-prep.md)
 
 ## 快速开始
 
@@ -156,8 +157,10 @@ dry-run 下会直接报错：跳过编译会留下没有 DLL 的 staging，无�
 - **Builder-first**：没有主 TOML 配置；Rust 代码就是模组定义。
 - **延迟副作用**：只有 `build()` 写文件、调用 `dotnet`、打包和部署。
 - **可检查的中间产物**：生成的 XML、C# 源码、`.csproj`、DLL 保留在 `.rim-rs/` 下；`csharp/` / `work/` / `out/` 按 mod 名隔离，同一 `base_dir` 连续构建多个 mod 互不覆盖。
+- **覆盖保护**：staging 与部署目录的覆盖都是整体替换，覆盖前会校验已有 `About.xml` 的 `packageId`（缺失时回退大小写不敏感的 `name` 比较）。属于另一个 mod 的目录（例如 Windows/macOS 上大小写变体的 mod 名）会被拒绝，而不是静默删除。
+- **失败不留残迹**：`build()` 失败时清理本次 staging（可能被误当成可用 mod 的残缺目录）；`csharp/` / `work/` / `out/` 中间产物保留供排查。
 - 未覆盖的字段用 `child(...)`、`raw(...)` 或通用 `Def` 表达。
-- 暂不包含：Steam Workshop 上传、`LoadFolders.xml`、1.7、C# 语法生成。
+- **明确不做**：Steam Workshop 上传、增量构建、`LoadFolders.xml`、1.7 / 多版本、C# 语法生成。
 
 ## 测试素材约定
 

@@ -592,8 +592,7 @@ dotnet build   .rim-rs/work/<ModName>/Mod.csproj --no-restore -c Release -o .rim
 - [ ] `rim-rs new` 项目模板
 - [x] 部署到 `Mods/`
 - [x] `-quicktest` 冒烟测试
-- [ ] Steam Workshop 上传
-- [ ] 增量构建
+- [x] 覆盖保护与失败清理（见 `docs/review/2026-11-07-release-prep.md`）
 
 ### 6.4 明确不做
 
@@ -603,6 +602,8 @@ dotnet build   .rim-rs/work/<ModName>/Mod.csproj --no-restore -c Release -o .rim
 - 自动修改 `ModsConfig.xml`
 - 运行时 Rust 代码 / native 桥接
 - 与 `rimgen` 的任何集成
+- Steam Workshop 上传（2026-11-07 决定：无实现计划）
+- 增量构建（2026-11-07 决定：无实现计划）
 
 ---
 
