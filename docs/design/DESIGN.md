@@ -242,7 +242,10 @@ public static class MyModMod
 - `.csharp_file` / `.csharp_dir` 让已有 `.cs` 文件直接参与编译。
 - 只添加引用而没有源码会报错，避免静默跳过构建。
 - 游戏 `Managed/` 目录里存在 `0Harmony.dll` / `HarmonyLib.dll` 时会自动加入引用；放在其他位置时需 `.csharp_reference(...)`。
-- `DefOf`、Harmony Patch 等语法 helper 由外部 C# builder 提供，不在本库实现。
+- `DefOf` 等语法 helper 仍由外部 C# builder 提供。例外：常见已验证的 Harmony
+  钩子提供类型化生成器 `harmony::MaterialCarry`
+  （`.harmony_material_carry(...)`，生成 `CalculateDominantIngredient` 的
+  dominant-ingredient 材质链 prefix，见 `harmony.rs`）。
 
 ### 3.6 Assets
 
@@ -429,19 +432,20 @@ struct SourceFile {
 ```text
 ModBuilder::build()
   1. 校验 metadata（packageId、name、supportedVersions：必须非空且只能是 `1.6`；`supported_versions(...)` 为替换语义）
+     （dependency / load_after 的 packageId 走同一 packageId 校验；MaterialCarry 至少注册一个 intermediate）
      （`dry_run(true)` 且有 C# 输入 → 在这里直接报错，任何文件都不写）
   2. 准备 .rim-rs/stage/<ModName>/
-  3. 写 About/About.xml
+  3. 写 About/About.xml（含 `modDependencies` 与去重的 `loadAfter`）
   4. 写 Defs/*.xml
   5. 写 Patches/*.xml
   6. 导出 Assets
   7. 如果有 C#：
-       a. 将源码字符串写入 .rim-rs/csharp/
+        a. 将源码字符串写入 .rim-rs/csharp/（MaterialCarry 等生成源在此注入）
         b. 探测 1.6 游戏目录和程序集（`game_probe(false)` 时跳过，引用全部
            由调用方显式提供，否则报错）
-       c. 生成 .rim-rs/work/<ModName>/Mod.csproj
-       d. dotnet restore + dotnet build
-       e. 复制 DLL 到 stage/Assemblies/
+        c. 生成 .rim-rs/work/<ModName>/Mod.csproj
+        d. dotnet restore + dotnet build
+        e. 复制 DLL 到 stage/Assemblies/
   8. 校验 staging
   9. 打包 dist/<ModName>.zip
   10. 可选 deploy 到 Mods/
