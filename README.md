@@ -38,6 +38,7 @@ fn main() -> Result<()> {
                     .recipe_user("CraftingSpot"),
             );
         })
+        .dependency(ModDependency::new("miquella.tamahagane").display_name("Tamahagane Expansion"))
         .csharp("MyMod.cs", MOD_CODE)
         .assets(|assets| {
             assets.textures("assets/textures");
@@ -91,7 +92,7 @@ examples/hello-mod/dist/Rim RS Test.zip
 
 ## C# 输入
 
-`rim-gen` 只负责把源码写入 `.rim-rs/csharp/<ModName>/`、生成 `net472` 项目并调用 `dotnet`，不提供 `Class` / `Method` 之类的语法 builder。
+`rim-gen` 把 C# 源码写入 `.rim-rs/csharp/<ModName>/`、生成 `net472` 项目并调用 `dotnet`；常见的 Harmony 钩子有类型化生成器：
 
 ```rust
 Mod::builder("My Mod")
@@ -99,6 +100,12 @@ Mod::builder("My Mod")
     .csharp_file("src-csharp/Extra.cs")      // 已存在的文件
     .csharp_dir("src-csharp")                // 目录下所有 .cs
     .csharp_reference("/path/to/0Harmony.dll")
+    // 中间品材质链（MadeFromStuff 坯料→制品）的 Harmony prefix，
+    // 生成 MaterialCarry.cs：对消耗该中间品的配方，把主料替换为其自身的 Stuff
+    .harmony_material_carry(
+        MaterialCarry::new("me.mymod").intermediate("Ham_Billet"),
+    )
+    .load_after("brrainz.harmony")           // 保证 Harmony mod 先加载
     .build()?;
 ```
 
@@ -143,7 +150,9 @@ dry-run 下会直接报错：跳过编译会留下没有 DLL 的 staging，无�
 | 模块 | 用途 |
 |---|---|
 | `xml` | 自有 XML 树，`quick-xml` 序列化；文本自动转义，`raw()` 逃生口 |
-| `defs` | `Def`、`DefSet`、`IntoDef`；`ThingDef`、`RecipeDef`、`HediffDef`、`ResearchProjectDef`、`TerrainDef` 类型化 builder |
+| `defs` | `Def`、`DefSet`、`IntoDef`；`ThingDef`、`RecipeDef`（含 `ThingFilter`）、`HediffDef`、`ResearchProjectDef`、`TerrainDef`、`StuffCategoryDef` 类型化 builder |
+| `harmony` | `MaterialCarry`：中间品材质链的 `CalculateDominantIngredient` Harmony prefix 生成器 |
+| `About.xml` | `.dependency(ModDependency)` / `.load_after(id)` 写 `modDependencies` / `loadAfter` |
 | `patch` | `Patch` / `Operation` / `PatchSet` |
 | `csharp` | 接收 C# 源码字符串、手写 `.cs` 文件和额外程序集引用；不做语法生成 |
 | `assets` | `map_file` / `map_dir` 资产映射、`textures` / `sounds` / `languages`（仅目录）、预览图、路径穿越校验 |

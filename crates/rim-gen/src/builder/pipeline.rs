@@ -20,7 +20,14 @@ impl ModBuilder {
     /// that no partial (unusable) mod directory is left behind
     /// (`Error::ModDirOccupied` is raised before anything is deleted when an
     /// overwrite target belongs to a different mod).
-    pub fn build(self) -> Result<BuildReport> {
+    pub fn build(mut self) -> Result<BuildReport> {
+        // A registered MaterialCarry becomes one ordinary in-memory C#
+        // source; from here on it shares the normal validate/compile path.
+        if let Some(carry) = self.material_carry.take() {
+            let file_name = carry.file_name_ref().to_string();
+            self.csharp.add_source(file_name, carry.source());
+        }
+
         self.validate()?;
 
         let mod_folder = project::sanitize_dir_name(&self.name);

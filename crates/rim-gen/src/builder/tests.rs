@@ -600,3 +600,102 @@ fn isolates_intermediate_dirs_per_mod() {
     assert!(work_dir.join("work/Other Mod/Mod.csproj").is_file());
     assert!(work_dir.join("out/Other Mod/OtherMod.dll").is_file());
 }
+
+#[test]
+fn about_xml_declares_dependencies_and_load_order() {
+    let manager = ModBuilder::builder("Test Mod")
+        .package_id("me.testmod")
+        .dependency(
+            ModDependency::new("miquella.tamahagane")
+                .display_name("Tamahagane Expansion")
+                .steam_workshop_url("https://steamcommunity.com/workshop/filedetails/?id=1"),
+        )
+        .dependency(ModDependency::new("me.evenmore").display_name("Even More"))
+        .load_after("brrainz.harmony")
+        .load_after("miquella.tamahagane");
+    let about = manager.about_xml().to_xml_string().unwrap();
+    let about = about.replace(['\n', '\t'], "");
+
+    assert!(about.contains(
+        "<modDependencies><li><packageId>miquella.tamahagane</packageId>\
+         <displayName>Tamahagane Expansion</displayName>"
+    ));
+    assert!(about.contains("<li><packageId>me.evenmore</packageId>"));
+    assert!(about.contains("</steamWorkshopUrl>"));
+    assert_eq!(
+        about.matches("<packageId>").count(),
+        3,
+        "dependencies + own packageId"
+    );
+    // dependency ids order first, then caller entries; no duplicates.
+    assert!(about.contains(
+        "<loadAfter><li>miquella.tamahagane</li><li>me.evenmore</li><li>brrainz.harmony</li>"
+    ));
+}
+
+#[test]
+fn rejects_an_invalid_dependency_package_id() {
+    let about = ModBuilder::builder("Test Mod")
+        .package_id("me.testmod")
+        .load_after("not a package id");
+    let error = about.validate().unwrap_err();
+    assert!(matches!(error, Error::InvalidPackageId(_)), "{error}");
+}
+
+#[test]
+fn rejects_a_material_carry_without_intermediates() {
+    let about = ModBuilder::builder("Test Mod")
+        .package_id("me.testmod")
+        .harmony_material_carry(MaterialCarry::new("me.testmod"));
+    let error = about.validate().unwrap_err();
+    assert!(
+        matches!(error, Error::MaterialCarryWithoutIntermediates),
+        "{error}"
+    );
+}
+
+/// N-: the registered MaterialCarry is staged and compiled like any other
+/// C# source, so the material-chain hook ships without hand-written C#.
+#[test]
+fn stages_the_generated_material_carry_source() {
+    let dir = tempfile::tempdir().unwrap();
+    let libs = dir.path().join("libs");
+    fs::create_dir_all(&libs).unwrap();
+    let reference = libs.join("0Harmony.dll");
+    fs::write(&reference, b"harmony stub").unwrap();
+
+    let fake = FakeDotnet::succeeding("TestMod");
+    let report = ModBuilder::builder("Test Mod")
+        .package_id("me.testmod")
+        .harmony_material_carry(
+            MaterialCarry::new("me.testmod")
+                .namespace("TestMod")
+                .intermediate("Ham_Billet"),
+        )
+        .csharp_reference(&reference)
+        .options(
+            BuildOptions::default()
+                .base_dir(dir.path())
+                .zip(false)
+                .game_probe(false)
+                .runner(Arc::new(fake.clone())),
+        )
+        .build()
+        .unwrap();
+
+    let source = fs::read_to_string(
+        dir.path()
+            .join(".rim-rs/csharp/Test Mod/MaterialCarry.cs"),
+    )
+    .unwrap();
+    assert!(source.contains("namespace TestMod\n{"));
+    assert!(source.contains("CalculateDominantIngredient"));
+    assert!(source.contains("\"Ham_Billet\""));
+
+    // The compile list includes the generated file.
+    let csproj = fake.csproj_text();
+    assert!(csproj.contains("MaterialCarry.cs"), "{csproj}");
+    // The compiled DLL landed in the staged mod directory as usual.
+    let staging = report.mod_dir.as_ref().expect("staging is kept by default");
+    assert!(staging.join("Assemblies/TestMod.dll").is_file());
+}

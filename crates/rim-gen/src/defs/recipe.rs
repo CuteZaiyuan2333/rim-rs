@@ -1,6 +1,141 @@
 use crate::defs::Def;
 use crate::xml::{Element, Node};
 
+/// An ingredient filter (`ThingFilter`) for a recipe.
+///
+/// Field names are verified against vanilla 1.6 data (`Recipes_Food.xml`;
+/// Faction_Empire apparel filters are the same shape): `thingDefs`,
+/// `categories`, `stuffCategoriesToAllow`, `disallowedThingDefs`,
+/// `disallowedCategories`.
+///
+/// ```no_run
+/// use rim_gen::prelude::*;
+///
+/// RecipeDef::new("Make_Billet")
+///     .ingredient_stuff(["Metallic"], 2)
+///     .default_ingredient_filter(|f| f.disallow_thing(["Gold"]));
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct ThingFilter {
+    things: Vec<String>,
+    categories: Vec<String>,
+    stuff_categories: Vec<String>,
+    disallowed_things: Vec<String>,
+    disallowed_categories: Vec<String>,
+}
+
+impl ThingFilter {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Allows specific thing defs (`<thingDefs>`).
+    pub fn allow_thing<I, S>(mut self, def_names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.things.extend(def_names.into_iter().map(|item| item.as_ref().to_string()));
+        self
+    }
+
+    /// Allows specific thing categories (`<categories>`).
+    pub fn allow_category<I, S>(mut self, categories: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.categories.extend(categories.into_iter().map(|item| item.as_ref().to_string()));
+        self
+    }
+
+    /// Allows everything made from the listed stuff categories
+    /// (`<stuffCategoriesToAllow>`), e.g. `Metallic` for "any metal".
+    pub fn allow_stuff_category<I, S>(mut self, categories: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.stuff_categories
+            .extend(categories.into_iter().map(|item| item.as_ref().to_string()));
+        self
+    }
+
+    /// Disallows specific thing defs (`<disallowedThingDefs>`, vanilla shape).
+    pub fn disallow_thing<I, S>(mut self, def_names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.disallowed_things
+            .extend(def_names.into_iter().map(|item| item.as_ref().to_string()));
+        self
+    }
+
+    /// Disallows specific thing categories (`<disallowedCategories>`).
+    pub fn disallow_category<I, S>(mut self, categories: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.disallowed_categories
+            .extend(categories.into_iter().map(|item| item.as_ref().to_string()));
+        self
+    }
+
+    /// Renders the filter as an element named `tag_name` (the tag itself is a
+    /// field name of the enclosing def, so callers pick it: `filter`,
+    /// `fixedIngredientFilter`, `defaultIngredientFilter`, ...).
+    fn render(self, tag_name: &str) -> Element {
+        let mut element = Element::new(tag_name);
+
+        if !self.things.is_empty() {
+            let mut list = Element::new("thingDefs");
+            for def_name in &self.things {
+                list = list.child_text("li", def_name);
+            }
+            element = element.child(list);
+        }
+        if !self.categories.is_empty() {
+            let mut list = Element::new("categories");
+            for category in &self.categories {
+                list = list.child_text("li", category);
+            }
+            element = element.child(list);
+        }
+        if !self.stuff_categories.is_empty() {
+            let mut list = Element::new("stuffCategoriesToAllow");
+            for category in &self.stuff_categories {
+                list = list.child_text("li", category);
+            }
+            element = element.child(list);
+        }
+        if !self.disallowed_things.is_empty() {
+            let mut list = Element::new("disallowedThingDefs");
+            for def_name in &self.disallowed_things {
+                list = list.child_text("li", def_name);
+            }
+            element = element.child(list);
+        }
+        if !self.disallowed_categories.is_empty() {
+            let mut list = Element::new("disallowedCategories");
+            for category in &self.disallowed_categories {
+                list = list.child_text("li", category);
+            }
+            element = element.child(list);
+        }
+
+        element
+    }
+}
+
+/// One ingredient: anything matched by `filter`, in `count`.
+#[derive(Debug, Clone)]
+struct Ingredient {
+    filter: ThingFilter,
+    count: u32,
+}
+
 /// Typed builder for a `RecipeDef`.
 #[derive(Debug, Clone)]
 pub struct RecipeDef {
@@ -13,15 +148,12 @@ pub struct RecipeDef {
     work_speed_stat: Option<String>,
     work_skill: Option<String>,
     ingredients: Vec<Ingredient>,
+    allow_mixing_ingredients: Option<bool>,
+    fixed_ingredient_filter: Option<ThingFilter>,
+    default_ingredient_filter: Option<ThingFilter>,
     products: Vec<(String, u32)>,
     recipe_users: Vec<String>,
     extras: Vec<Node>,
-}
-
-#[derive(Debug, Clone)]
-struct Ingredient {
-    def_name: String,
-    count: u32,
 }
 
 impl RecipeDef {
@@ -36,6 +168,9 @@ impl RecipeDef {
             work_speed_stat: None,
             work_skill: None,
             ingredients: Vec::new(),
+            allow_mixing_ingredients: None,
+            fixed_ingredient_filter: None,
+            default_ingredient_filter: None,
             products: Vec::new(),
             recipe_users: Vec::new(),
             extras: Vec::new(),
@@ -79,10 +214,52 @@ impl RecipeDef {
 
     /// Adds an ingredient filtered by a single thingDef.
     pub fn ingredient(mut self, def_name: impl Into<String>, count: u32) -> Self {
+        let def_name = def_name.into();
         self.ingredients.push(Ingredient {
-            def_name: def_name.into(),
+            filter: ThingFilter::new().allow_thing([def_name.as_str()]),
             count,
         });
+        self
+    }
+
+    /// Adds a material-class ingredient: anything whose def is stuff of the
+    /// listed categories (`filter -> stuffCategoriesToAllow`), e.g.
+    /// `.ingredient_stuff(["Metallic"], 2)` or
+    /// `.ingredient_stuff(["Woody", "Metallic"], 4)`.
+    pub fn ingredient_stuff<I, S>(mut self, categories: I, count: u32) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.ingredients.push(Ingredient {
+            filter: ThingFilter::new().allow_stuff_category(categories),
+            count,
+        });
+        self
+    }
+
+    /// Sets `allowMixingIngredients` (vanilla default `false`): whether one
+    /// ingredient line may be filled with a mix of different materials.
+    pub fn allow_mixing_ingredients(mut self, value: bool) -> Self {
+        self.allow_mixing_ingredients = Some(value);
+        self
+    }
+
+    /// Sets the bill's overall allowed pool (`fixedIngredientFilter`).
+    pub fn fixed_ingredient_filter(
+        mut self,
+        f: impl FnOnce(ThingFilter) -> ThingFilter,
+    ) -> Self {
+        self.fixed_ingredient_filter = Some(f(ThingFilter::new()));
+        self
+    }
+
+    /// Narrows what bills suggest by default (`defaultIngredientFilter`).
+    pub fn default_ingredient_filter(
+        mut self,
+        f: impl FnOnce(ThingFilter) -> ThingFilter,
+    ) -> Self {
+        self.default_ingredient_filter = Some(f(ThingFilter::new()));
         self
     }
 
@@ -138,14 +315,24 @@ impl RecipeDef {
         if !self.ingredients.is_empty() {
             let mut ingredients = Element::new("ingredients");
             for ingredient in &self.ingredients {
-                let filter = Element::new("filter")
-                    .child(Element::new("thingDefs").child_text("li", &ingredient.def_name));
+                let filter = ingredient.filter.clone().render("filter");
                 let li = Element::new("li")
                     .child(filter)
                     .child_text("count", ingredient.count.to_string());
                 ingredients = ingredients.child(li);
             }
             root = root.child(ingredients);
+        }
+
+        if let Some(value) = self.allow_mixing_ingredients {
+            root = root.child_text("allowMixingIngredients", if value { "true" } else { "false" });
+        }
+
+        if let Some(filter) = self.fixed_ingredient_filter {
+            root = root.child(filter.render("fixedIngredientFilter"));
+        }
+        if let Some(filter) = self.default_ingredient_filter {
+            root = root.child(filter.render("defaultIngredientFilter"));
         }
 
         if !self.products.is_empty() {
@@ -197,11 +384,47 @@ mod tests {
         let xml = def.into_element().to_xml_string().unwrap();
         assert!(xml.contains("<defName>Make_MyThing</defName>"));
         assert!(xml.contains("<workAmount>120</workAmount>"));
-        assert!(xml.contains("<thingDefs>"));
-        assert!(xml.contains("<li>Steel</li>"));
+        let xml = xml.replace(['\n', '\t'], "");
+        assert!(xml.contains("<filter><thingDefs><li>Steel</li></thingDefs></filter>"));
         assert!(xml.contains("<products>"));
         assert!(xml.contains("<MyThing>1</MyThing>"));
         assert!(xml.contains("<recipeUsers>"));
         assert!(xml.contains("<li>CraftingSpot</li>"));
     }
+
+    #[test]
+    fn builds_a_material_class_recipe() {
+        let def = RecipeDef::new("Make_Billet")
+            .ingredient_stuff(["Metallic"], 2)
+            .fixed_ingredient_filter(|f| f.allow_stuff_category(["Metallic"]))
+            .default_ingredient_filter(|f| f.disallow_thing(["Gold"]))
+            .build();
+
+        let xml = def.into_element().to_xml_string().unwrap();
+        let xml = xml.replace(['\n', '\t'], "");
+        assert!(xml.contains(
+            "<filter><stuffCategoriesToAllow><li>Metallic</li></stuffCategoriesToAllow></filter>"
+        ));
+        assert!(xml.contains("<count>2</count>"));
+        assert!(xml.contains(
+            "<fixedIngredientFilter><stuffCategoriesToAllow><li>Metallic</li>\
+             </stuffCategoriesToAllow></fixedIngredientFilter>"
+        ));
+        assert!(xml.contains(
+            "<defaultIngredientFilter><disallowedThingDefs><li>Gold</li></disallowedThingDefs>\
+             </defaultIngredientFilter>"
+        ));
+    }
+
+    #[test]
+    fn emits_allow_mixing_ingredients() {
+        let def = RecipeDef::new("Make_Mixed")
+            .ingredient_stuff(["Metallic"], 3)
+            .ingredient_stuff(["Woody"], 3)
+            .allow_mixing_ingredients(true)
+            .build();
+
+        let xml = def.into_element().to_xml_string().unwrap();
+        assert!(xml.contains("<allowMixingIngredients>true</allowMixingIngredients>"));
+        assert_eq!(xml.matches("<stuffCategoriesToAllow>").count(), 2);    }
 }

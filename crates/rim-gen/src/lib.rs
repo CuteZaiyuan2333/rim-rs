@@ -15,6 +15,7 @@ pub mod defs;
 pub mod dotnet;
 pub mod error;
 pub mod game;
+pub mod harmony;
 pub mod package;
 pub mod patch;
 pub mod prelude;
@@ -23,3 +24,4 @@ pub mod xml;
 
 pub use builder::{BuildOptions, BuildReport, ModBuilder};
 pub use error::{Error, Result};
+pub use harmony::MaterialCarry;

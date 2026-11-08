@@ -124,6 +124,9 @@ pub enum Error {
     #[error("PatchOperation `{0}` has no xpath, value or content")]
     EmptyOperation(String),
 
+    #[error("MaterialCarry needs at least one registered .intermediate(...) def")]
+    MaterialCarryWithoutIntermediates,
+
     #[error("staging directory is missing About/About.xml: {0}")]
     AboutXmlMissing(PathBuf),
 

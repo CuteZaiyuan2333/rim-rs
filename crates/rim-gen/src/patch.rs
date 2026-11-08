@@ -77,6 +77,22 @@ impl Operation {
         self
     }
 
+    /// Sets `<value>` to multiple bare child elements.
+    ///
+    /// Use this when the target node is a vanilla List (e.g. `ThingDef/recipes`):
+    /// RimWorld inserts the *children* of `<value>` into the list, so a list
+    /// must never receive a single wrapping element. [`Self::value`] also
+    /// works for List targets when you wrap each item in `<li>` yourself —
+    /// but only pass one `<li>`-shaped element; for several items, use this.
+    pub fn value_list(&mut self, items: impl IntoIterator<Item = Element>) -> &mut Self {
+        let mut value = Element::new("value");
+        for item in items {
+            value = value.child(item);
+        }
+        self.value = Some(value);
+        self
+    }
+
     /// Sets `<value>` to a raw XML fragment.
     pub fn raw_value(&mut self, raw: impl Into<String>) -> &mut Self {
         self.value = Some(Element::new("value").raw(raw));
@@ -174,6 +190,23 @@ mod tests {
         assert!(xml.contains("<xpath>Defs/ThingDef[defName=&quot;Gun&quot;]/statBases</xpath>"));
         assert!(xml.contains("<value>"));
         assert!(xml.contains("<MarketValue>200</MarketValue>"));
+    }
+
+    #[test]
+    fn adds_bare_list_items_with_value_list() {
+        let patch = Patch::new("MyMod.Patches").op("PatchOperationAdd", |op| {
+            op.xpath(r#"Defs/ThingDef[defName="Ham_Anvil"]/recipes"#)
+                .value_list([
+                    Element::new("li").text("Ham_ForgeBillet"),
+                    Element::new("li").text("Ham_ForgeBlade_Short"),
+                ]);
+        });
+
+        let xml = patch.into_element().to_xml_string().unwrap();
+        let xml = xml.replace(['\n', '\t'], "");
+        assert!(xml.contains(
+            "<value><li>Ham_ForgeBillet</li><li>Ham_ForgeBlade_Short</li></value>"
+        ));
     }
 
     #[test]

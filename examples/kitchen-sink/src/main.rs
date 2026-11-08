@@ -525,10 +525,7 @@ fn make_surgery_recipe() -> RecipeDef {
         .description("Install the imbued crystal organ - a test surgery.")
         .job_string("Installing imbued crystal organ.")
         .ingredient("RimRsOrganItem", 1)
-        .child(
-            Element::new("fixedIngredientFilter")
-                .child(Element::new("thingDefs").child_text("li", "RimRsOrganItem")),
-        )
+        .fixed_ingredient_filter(|f| f.allow_thing(["RimRsOrganItem"]))
         .child(Element::new("appliedOnFixedBodyParts").child_text("li", "RimRsOrganPartCrystal"))
         .child(txt("addsHediff", "RimRsCrystalHeart"))
         .child(txt("deathOnFailedSurgeryChance", "0.2"))

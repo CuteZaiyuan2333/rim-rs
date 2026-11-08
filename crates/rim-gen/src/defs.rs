@@ -4,12 +4,14 @@ use crate::xml::{Element, Node};
 pub mod hediff;
 pub mod recipe;
 pub mod research;
+pub mod stuff;
 pub mod terrain;
 pub mod thing;
 
 pub use hediff::HediffDef;
-pub use recipe::RecipeDef;
+pub use recipe::{RecipeDef, ThingFilter};
 pub use research::ResearchProjectDef;
+pub use stuff::StuffCategoryDef;
 pub use terrain::TerrainDef;
 pub use thing::ThingDef;
 
@@ -112,6 +114,12 @@ impl IntoDef for HediffDef {
 }
 
 impl IntoDef for ResearchProjectDef {
+    fn into_def(self) -> Def {
+        self.build()
+    }
+}
+
+impl IntoDef for StuffCategoryDef {
     fn into_def(self) -> Def {
         self.build()
     }

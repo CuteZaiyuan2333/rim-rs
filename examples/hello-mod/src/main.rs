@@ -100,7 +100,14 @@ fn main() -> Result<()> {
         .patches(|patches| {
             patches.add(Patch::new("RimRsTweak").op("PatchOperationAdd", |op| {
                 op.xpath(r#"Defs/ThingDef[defName="RimRsPurpleCube"]/statBases"#)
-                    .raw_value("<Flammability>0.4</Flammability>");
+                    .value(Element::new("Flammability").text("0.4"));
+            }));
+            // List targets need bare <li> children: `value_list` inserts the
+            // *children* of <value>, so each item goes in as its own list
+            // entry (the failing old shape is one wrapped element).
+            patches.add(Patch::new("RimRsTweakList").op("PatchOperationAdd", |op| {
+                op.xpath(r#"Defs/ThingDef[defName="TableMachining"]/recipes"#)
+                    .value_list([Element::new("li").text("Make_RimRsPurpleCube")]);
             }));
         })
         .csharp("RimRsTestMod.cs", MOD_CODE)
