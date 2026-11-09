@@ -703,11 +703,8 @@ fn stages_the_generated_material_carry_source() {
         .build()
         .unwrap();
 
-    let source = fs::read_to_string(
-        dir.path()
-            .join(".rim-rs/csharp/Test Mod/MaterialCarry.cs"),
-    )
-    .unwrap();
+    let source =
+        fs::read_to_string(dir.path().join(".rim-rs/csharp/Test Mod/MaterialCarry.cs")).unwrap();
     assert!(source.contains("namespace TestMod\n{"));
     assert!(source.contains("CalculateDominantIngredient"));
     assert!(source.contains("\"Ham_Billet\""));

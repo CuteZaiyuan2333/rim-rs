@@ -35,7 +35,8 @@ impl ThingFilter {
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
-        self.things.extend(def_names.into_iter().map(|item| item.as_ref().to_string()));
+        self.things
+            .extend(def_names.into_iter().map(|item| item.as_ref().to_string()));
         self
     }
 
@@ -45,7 +46,8 @@ impl ThingFilter {
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
-        self.categories.extend(categories.into_iter().map(|item| item.as_ref().to_string()));
+        self.categories
+            .extend(categories.into_iter().map(|item| item.as_ref().to_string()));
         self
     }
 
@@ -246,19 +248,13 @@ impl RecipeDef {
     }
 
     /// Sets the bill's overall allowed pool (`fixedIngredientFilter`).
-    pub fn fixed_ingredient_filter(
-        mut self,
-        f: impl FnOnce(ThingFilter) -> ThingFilter,
-    ) -> Self {
+    pub fn fixed_ingredient_filter(mut self, f: impl FnOnce(ThingFilter) -> ThingFilter) -> Self {
         self.fixed_ingredient_filter = Some(f(ThingFilter::new()));
         self
     }
 
     /// Narrows what bills suggest by default (`defaultIngredientFilter`).
-    pub fn default_ingredient_filter(
-        mut self,
-        f: impl FnOnce(ThingFilter) -> ThingFilter,
-    ) -> Self {
+    pub fn default_ingredient_filter(mut self, f: impl FnOnce(ThingFilter) -> ThingFilter) -> Self {
         self.default_ingredient_filter = Some(f(ThingFilter::new()));
         self
     }
@@ -325,7 +321,10 @@ impl RecipeDef {
         }
 
         if let Some(value) = self.allow_mixing_ingredients {
-            root = root.child_text("allowMixingIngredients", if value { "true" } else { "false" });
+            root = root.child_text(
+                "allowMixingIngredients",
+                if value { "true" } else { "false" },
+            );
         }
 
         if let Some(filter) = self.fixed_ingredient_filter {
@@ -426,5 +425,6 @@ mod tests {
 
         let xml = def.into_element().to_xml_string().unwrap();
         assert!(xml.contains("<allowMixingIngredients>true</allowMixingIngredients>"));
-        assert_eq!(xml.matches("<stuffCategoriesToAllow>").count(), 2);    }
+        assert_eq!(xml.matches("<stuffCategoriesToAllow>").count(), 2);
+    }
 }

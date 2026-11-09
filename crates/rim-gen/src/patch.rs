@@ -204,9 +204,9 @@ mod tests {
 
         let xml = patch.into_element().to_xml_string().unwrap();
         let xml = xml.replace(['\n', '\t'], "");
-        assert!(xml.contains(
-            "<value><li>Ham_ForgeBillet</li><li>Ham_ForgeBlade_Short</li></value>"
-        ));
+        assert!(
+            xml.contains("<value><li>Ham_ForgeBillet</li><li>Ham_ForgeBlade_Short</li></value>")
+        );
     }
 
     #[test]

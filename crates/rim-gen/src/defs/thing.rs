@@ -402,8 +402,9 @@ mod tests {
             .build();
 
         let xml = def.into_element().to_xml_string().unwrap();
-        assert!(xml
-            .contains(r#"<ThingDef ParentName="ThingWithComps" Name="Kat_BaseMeleeWeapon" Abstract="True">"#));
+        assert!(xml.contains(
+            r#"<ThingDef ParentName="ThingWithComps" Name="Kat_BaseMeleeWeapon" Abstract="True">"#
+        ));
         assert!(!xml.contains("defName"));
     }
 
@@ -427,8 +428,9 @@ mod tests {
         let xml = def.into_element().to_xml_string().unwrap();
         let xml = xml.replace(['\n', '\t'], "");
         assert!(xml.contains("<stuffCategories><li>Metallic</li></stuffCategories>"));
-        assert!(xml
-            .contains("<stuffProps><categories><li>Ham_BladeBillets</li></categories></stuffProps>"));
+        assert!(xml.contains(
+            "<stuffProps><categories><li>Ham_BladeBillets</li></categories></stuffProps>"
+        ));
         assert!(!xml.contains("stuffCategoriesToAllow"));
         assert!(xml.contains("<useHitPoints>false</useHitPoints>"));
         assert!(xml.contains("<healthAffectsPrice>false</healthAffectsPrice>"));

@@ -252,9 +252,7 @@ mod tests {
 
     #[test]
     fn namespaced_output_indents_the_class() {
-        let source = carry()
-            .namespace("ForgeExpansion")
-            .source();
+        let source = carry().namespace("ForgeExpansion").source();
         assert!(source.contains("namespace ForgeExpansion\n{"));
         assert!(source.contains("    [StaticConstructorOnStartup]"));
         assert!(source.contains("    public static class MaterialCarry"));
