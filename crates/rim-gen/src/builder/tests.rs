@@ -616,20 +616,40 @@ fn about_xml_declares_dependencies_and_load_order() {
     let about = manager.about_xml().to_xml_string().unwrap();
     let about = about.replace(['\n', '\t'], "");
 
+    // Only the dependency with a download link survives into
+    // modDependencies: vanilla drops url-less entries (with a warning).
     assert!(about.contains(
         "<modDependencies><li><packageId>miquella.tamahagane</packageId>\
          <displayName>Tamahagane Expansion</displayName>"
     ));
-    assert!(about.contains("<li><packageId>me.evenmore</packageId>"));
     assert!(about.contains("</steamWorkshopUrl>"));
-    assert_eq!(
-        about.matches("<packageId>").count(),
-        3,
-        "dependencies + own packageId"
-    );
-    // dependency ids order first, then caller entries; no duplicates.
+    assert!(!about.contains("me.evenmore</packageId>"));
+
+    // Dependency ids order first, then caller entries; no duplicates.
+    // The url-less dependency degrades to a loadAfter-only entry.
     assert!(about.contains(
         "<loadAfter><li>miquella.tamahagane</li><li>me.evenmore</li><li>brrainz.harmony</li>"
+    ));
+}
+
+#[test]
+fn download_url_also_declares_the_dependency() {
+    let about = ModBuilder::builder("Test Mod")
+        .package_id("me.testmod")
+        .dependency(
+            ModDependency::new("someone.localmod")
+                .display_name("Local Mod")
+                .download_url("https://github.com/someone/localmod/releases"),
+        )
+        .about_xml()
+        .to_xml_string()
+        .unwrap();
+    let about = about.replace(['\n', '\t'], "");
+
+    assert!(about.contains(
+        "<modDependencies><li><packageId>someone.localmod</packageId>\
+         <displayName>Local Mod</displayName>\
+         <downloadUrl>https://github.com/someone/localmod/releases</downloadUrl>"
     ));
 }
 

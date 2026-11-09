@@ -62,6 +62,7 @@ pub struct ModDependency {
     package_id: String,
     display_name: Option<String>,
     steam_workshop_url: Option<String>,
+    download_url: Option<String>,
 }
 
 impl ModDependency {
@@ -70,6 +71,7 @@ impl ModDependency {
             package_id: package_id.into(),
             display_name: None,
             steam_workshop_url: None,
+            download_url: None,
         }
     }
 
@@ -80,10 +82,25 @@ impl ModDependency {
         self
     }
 
-    /// Sets `<steamWorkshopUrl>` (Steam distribution only).
+    /// Sets `<steamWorkshopUrl>` (Steam distribution).
     pub fn steam_workshop_url(mut self, url: impl Into<String>) -> Self {
         self.steam_workshop_url = Some(url.into());
         self
+    }
+
+    /// Sets `<downloadUrl>` (non-Steam distribution, e.g. a GitHub release).
+    pub fn download_url(mut self, url: impl Into<String>) -> Self {
+        self.download_url = Some(url.into());
+        self
+    }
+
+    /// Vanilla's `ModMetaDataInternal.ValidateDependencies` **removes**
+    /// modDependencies entries that have neither `<downloadUrl>` nor
+    /// `<steamWorkshopUrl>` (logging a "needs to have <downloadUrl>..." an
+    /// warning per entry) — such entries would be dead output, so a
+    /// URL-less [`ModDependency`] degrades to a pure `<loadAfter>` entry.
+    fn has_download_link(&self) -> bool {
+        self.steam_workshop_url.is_some() || self.download_url.is_some()
     }
 
     pub(crate) fn package_id(&self) -> &str {
@@ -153,7 +170,14 @@ impl ModBuilder {
 
     /// Declares a cross-mod dependency: it writes a `<modDependencies>` entry
     /// in `About.xml` and the matching `loadAfter` entry, replacing the
-    /// hand-written `About/Dependencies.xml` pattern.
+    /// hand-written `About/Dependencies.xml` pattern (vanilla 1.6 never reads
+    /// files other than `About.xml` for this metadata).
+    ///
+    /// RimWorld's own validation drops `modDependencies` entries that carry no
+    /// download link; a [`ModDependency`] without
+    /// [`steam_workshop_url`](ModDependency::steam_workshop_url) or
+    /// [`download_url`](ModDependency::download_url) therefore degrades to a
+    /// pure `<loadAfter>` entry (ordering still enforced).
     ///
     /// The package id must be a valid RimWorld package id
     /// (e.g. `miquella.tamahagane`).
@@ -301,15 +325,27 @@ impl ModBuilder {
         }
         root = root.child(versions);
 
-        if !self.dependencies.is_empty() {
+        // Only dependencies WITH a download link are emitted: vanilla's
+        // ModMetaDataInternal.ValidateDependencies removes the other kind
+        // (logging a warning per entry), so a URL-less dependency degrades
+        // to a pure loadAfter entry below.
+        let declared_dependencies = self
+            .dependencies
+            .iter()
+            .filter(|dependency| dependency.has_download_link())
+            .collect::<Vec<_>>();
+        if !declared_dependencies.is_empty() {
             let mut dependencies = Element::new("modDependencies");
-            for dependency in &self.dependencies {
+            for dependency in &declared_dependencies {
                 let mut li = Element::new("li").child_text("packageId", dependency.package_id());
                 if let Some(display_name) = &dependency.display_name {
                     li = li.child_text("displayName", display_name);
                 }
                 if let Some(steam_workshop_url) = &dependency.steam_workshop_url {
                     li = li.child_text("steamWorkshopUrl", steam_workshop_url);
+                }
+                if let Some(download_url) = &dependency.download_url {
+                    li = li.child_text("downloadUrl", download_url);
                 }
                 dependencies = dependencies.child(li);
             }
